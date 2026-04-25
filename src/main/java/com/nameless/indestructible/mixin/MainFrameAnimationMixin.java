@@ -24,7 +24,7 @@ public class MainFrameAnimationMixin extends StaticAnimation {
     public void onTick(LivingEntityPatch<?> entitypatch, CallbackInfo ci){
         if(!entitypatch.isLogicalClient() && entitypatch instanceof AdvancedCustomHumanoidMobPatch<?> advancedCustomHumanoidMobPatch && advancedCustomHumanoidMobPatch.getEventManager().hasTimeEvent()){
 
-                AnimationPlayer player = entitypatch.getAnimator().getPlayerFor(this);
+                AnimationPlayer player = entitypatch.getAnimator().getPlayerFor(this.getAccessor());
                 if (player != null) {
                     float prevElapsed = player.getPrevElapsedTime();
                     float elapsed = player.getElapsedTime();

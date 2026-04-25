@@ -1,3 +1,12 @@
+EFI-Unofficial 20.14.16
+=======================
+ - Added runtime datapack nbt_tag-driven provider checks for dynamic advanced/base patch transitions.
+ - Fixed repeated swap failure loops in provider apply/restore cycle.
+ - Fixed duplicate SynchedEntityData define crashes on re-apply by guarding duplicate define attempts in AdvancedCustomHumanoidMobPatch.
+ - Improved provider state handling with reversible current/previous provider tracking per entity type.
+ - Removed temporary swap debug logging noise from normal success paths.
+ - Updated release metadata and standardized artifact name to EFI-Unofficial-20.14.16.jar.
+
 1.18.x Changelog
 40.2
 ====

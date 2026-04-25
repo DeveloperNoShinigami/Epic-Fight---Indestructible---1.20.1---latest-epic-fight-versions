@@ -29,6 +29,11 @@ public class AdvancedChasingGoal<T extends AdvancedCustomHumanoidMobPatch<?>> ex
 			this.mob.getLookControl().setLookAt(target, 30.0F, 30.0F);
 		}
 
+		if (this.mobpatch.isWithinTaczEngagementRange()) {
+			this.mob.getNavigation().stop();
+			return;
+		}
+
 		if (this.mobpatch.getEntityState().movementLocked()) return;
 		boolean withDistance = this.attackRadiusSqr > this.mob.distanceToSqr(target.getX(), target.getY(), target.getZ());
 

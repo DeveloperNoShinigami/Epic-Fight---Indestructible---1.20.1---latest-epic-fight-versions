@@ -1,7 +1,7 @@
 package com.nameless.indestructible.server;
 
 import com.nameless.indestructible.world.capability.AdvancedCustomHumanoidMobPatch;
-import net.minecraft.network.chat.TextComponent;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerBossEvent;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.LivingEntity;
@@ -16,7 +16,7 @@ public class AdvancedBossInfo extends ServerBossEvent {
     private final Set<ServerPlayer> unseen = new HashSet<>();
 
     public AdvancedBossInfo(AdvancedCustomHumanoidMobPatch<?> achpatch) {
-        super(new TextComponent("advanced epic fight boss"), BossBarColor.WHITE, BossBarOverlay.PROGRESS);
+        super(Component.literal("advanced epic fight boss"), BossBarColor.WHITE, BossBarOverlay.PROGRESS);
         this.setVisible(true);
         this.ACHPatch = achpatch;
     }

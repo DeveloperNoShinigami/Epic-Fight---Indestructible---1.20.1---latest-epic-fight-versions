@@ -5,14 +5,15 @@
   "compatibilityLevel": "JAVA_17",
   "mixins": [
     "AttackAnimationMixin",
+    "BehaviorMixin",
     "BehaviorSeriesMixin",
     "CombatBehaviorsMixin",
-    "HurtEventMixin",
-    "MainFrameAnimationMixin"
+    "MixinCapabilityDispatcherAccessor",
+    "MainFrameAnimationMixin",
+    "TargetInDistanceMixin"
   ],
   "client": [
-    "HealthBarIndicatorMixin",
-    "TargetIndicatorMixin"
+    "HealthBarIndicatorMixin"
   ],
   "server": [
   ],

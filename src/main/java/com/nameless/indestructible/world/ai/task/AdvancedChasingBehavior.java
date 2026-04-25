@@ -28,7 +28,7 @@ public class AdvancedChasingBehavior<T extends AdvancedCustomHumanoidMobPatch<?>
 	protected boolean canStillUse(ServerLevel level, Mob mob, long gameTime) {
 		if (super.canStillUse(level, mob, gameTime)) {
 			MobPatch<?> mobpatch = EpicFightCapabilities.getEntityPatch(mob, MobPatch.class);
-			return !mobpatch.getEntityState().inaction() && !withinDistance(mob);
+			return !mobpatch.getEntityState().inaction() && !withinDistance(mob) && !this.mobpatch.isWithinTaczEngagementRange();
 		}
 		return false;
 	}
@@ -45,6 +45,11 @@ public class AdvancedChasingBehavior<T extends AdvancedCustomHumanoidMobPatch<?>
 		if(target == null) return;
 		if(!this.mobpatch.getEntityState().turningLocked()) {
 			mob.getLookControl().setLookAt(target, 30.0F, 30.0F);
+		}
+
+		if (this.mobpatch.isWithinTaczEngagementRange()) {
+			mob.getNavigation().stop();
+			return;
 		}
 
 		if (this.mobpatch.getEntityState().movementLocked()) return;

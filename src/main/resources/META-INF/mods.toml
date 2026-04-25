@@ -1,15 +1,20 @@
 modLoader="javafml" #mandatory
 
-loaderVersion="[40,)" #mandatory
+loaderVersion="[47,)" #mandatory
 license="LGPLv3"
 [[mods]] #mandatory
 modId="indestructible" #mandatory
 version="${file.jarVersion}" #mandatory
-displayName="Indestructible" #mandatory
+displayName="EFI-unofficial" #mandatory
 
 credits=""
-authors="namelesslk"
+authors="namelesslk, BlueLotusCoding"
 description='''
+Rebuilt to work with the latest Epic Fight version.
+Now Lets you apply TACZ combat behavior to any compatible mob through datapack setup.
+cnpcs gets quality-of-life upgrades
+for CNPC x Epic Fight setups too. In addition to all this, there is also brand 
+new conditions and behaviors that better enhance your advanced mob combat!
 '''
 # A dependency - use the . to indicate dependency for a specific modid. Dependencies are optional.
 [[dependencies.indestructible]] #optional
@@ -18,7 +23,7 @@ description='''
     # Does this dependency have to exist - if not, ordering below must be specified
     mandatory=true #mandatory
     # The version range of the dependency
-    versionRange="[40,)" #mandatory
+    versionRange="[47,)" #mandatory
     # An ordering relationship for the dependency - BEFORE or AFTER required if the relationship is not mandatory
     ordering="NONE"
     # Side this dependency is applied on - BOTH, CLIENT or SERVER
@@ -28,13 +33,13 @@ description='''
     modId="minecraft"
     mandatory=true
 # This version range declares a minimum of the current minecraft version up to but not including the next major version
-    versionRange="[1.18.2,1.19)"
+    versionRange="[1.20.1,1.21)"
     ordering="NONE"
     side="BOTH"
 [[dependencies.indestructible]]
     modId="epicfight"
     mandatory=true
-    versionRange="[18.5.10,)"
+    versionRange="[20.14.16,)"
     ordering="BEFORE"
     side="BOTH"
 [[dependencies.indestructible]]
@@ -48,4 +53,22 @@ description='''
     mandatory=false
     versionRange="[0,)"
     ordering="BEFORE"
+    side="BOTH"
+[[dependencies.indestructible]]
+    modId="tacz"
+    mandatory=false
+    versionRange="[1.1.7,)"
+    ordering="AFTER"
+    side="BOTH"
+[[dependencies.indestructible]]
+    modId="customnpcs"
+    mandatory=false
+    versionRange="[0,)"
+    ordering="AFTER"
+    side="BOTH"
+[[dependencies.indestructible]]
+    modId="epic_arsenal"
+    mandatory=false
+    versionRange="[0,)"
+    ordering="AFTER"
     side="BOTH"

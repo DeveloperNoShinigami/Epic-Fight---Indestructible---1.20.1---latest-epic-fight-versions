@@ -46,13 +46,13 @@ public class CommandEvent {
 		}
 		public static TimeStampedEvent CreateTimeCommandEvent(float time, String command, boolean isTarget) {
 			Consumer<MobPatch<?>> event = (entitypatch) -> {
-				Level server = entitypatch.getOriginal().level;
+				Level server = entitypatch.getOriginal().level();
 				CommandSourceStack css = entitypatch.getOriginal().createCommandSourceStack().withPermission(2).withSuppressedOutput();
 				if (isTarget && entitypatch.getTarget() != null) {
 					css = css.withEntity(entitypatch.getTarget());
 				}
 				if(server.getServer() != null && entitypatch.getOriginal() != null){
-					server.getServer().getCommands().performCommand(css,command);
+					server.getServer().getCommands().performPrefixedCommand(css,command);
 				}
 			};
 			return new TimeStampedEvent(time, event);
@@ -66,13 +66,13 @@ public class CommandEvent {
 		}
 		public static BiEvent CreateBiCommandEvent(String command, boolean isTarget) {
 			BiConsumer<MobPatch<?>, Entity> event = (entitypatch, target) -> {
-				Level server = entitypatch.getOriginal().level;
+				Level server = entitypatch.getOriginal().level();
 				CommandSourceStack css = entitypatch.getOriginal().createCommandSourceStack().withPermission(2).withSuppressedOutput();
 				if (isTarget && target instanceof LivingEntity) {
 					css = css.withEntity(target);
 				}
 				if(server.getServer() != null && entitypatch.getOriginal() != null){
-					server.getServer().getCommands().performCommand(css,command);
+					server.getServer().getCommands().performPrefixedCommand(css,command);
 				}
 			};
 			return new BiEvent(event);
@@ -93,13 +93,13 @@ public class CommandEvent {
 		}
 		public static StunEvent CreateStunCommandEvent(String command, boolean isTarget, StunType stunType) {
 			BiConsumer<MobPatch<?>, Entity> event = (entitypatch, target) -> {
-				Level server = entitypatch.getOriginal().level;
+				Level server = entitypatch.getOriginal().level();
 				CommandSourceStack css = entitypatch.getOriginal().createCommandSourceStack().withPermission(2).withSuppressedOutput();
 				if (isTarget && target instanceof LivingEntity) {
 					css = css.withEntity(target);
 				}
 				if(server.getServer() != null && entitypatch.getOriginal() != null){
-					server.getServer().getCommands().performCommand(css,command);
+					server.getServer().getCommands().performPrefixedCommand(css,command);
 				}
 			};
 
@@ -122,13 +122,13 @@ public class CommandEvent {
 		}
 		public static BlockedEvent CreateBlockCommandEvent(String command, boolean isTarget, boolean isParry) {
 			BiConsumer<MobPatch<?>, Entity> event = (entitypatch, target) -> {
-				Level server = entitypatch.getOriginal().level;
+				Level server = entitypatch.getOriginal().level();
 				CommandSourceStack css = entitypatch.getOriginal().createCommandSourceStack().withPermission(2).withSuppressedOutput();
 				if (isTarget && target instanceof LivingEntity) {
 					css = css.withEntity(target);
 				}
 				if(server.getServer() != null && entitypatch.getOriginal() != null){
-					server.getServer().getCommands().performCommand(css,command);
+					server.getServer().getCommands().performPrefixedCommand(css,command);
 				}
 			};
 			return new BlockedEvent(event, isParry);

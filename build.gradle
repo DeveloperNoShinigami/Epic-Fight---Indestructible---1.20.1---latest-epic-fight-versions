@@ -1,11 +1,12 @@
 buildscript {
     repositories {
         maven { url = 'https://maven.minecraftforge.net' }
-        maven { url = "https://repo.spongepowered.org/maven" }
+        maven { url = 'https://repo.spongepowered.org/repository/maven-public/' }
+        maven { url = 'https://cursemaven.com' }
         mavenCentral()
     }
     dependencies {
-        classpath group: 'net.minecraftforge.gradle', name: 'ForgeGradle', version: '5.1.+', changing: true
+        classpath group: 'net.minecraftforge.gradle', name: 'ForgeGradle', version: '[6.0,6.2)', changing: true
         classpath 'org.spongepowered:mixingradle:0.7-SNAPSHOT'
     }
 }
@@ -19,9 +20,9 @@ apply plugin: 'org.spongepowered.mixin'
 
 
 
-version = '18.5.15'
-group = 'com.nameless.indestructible' // http://maven.apache.org/guides/mini/guide-naming-conventions.html
-archivesBaseName = 'indestructible'
+version = '20.14.16'
+group = 'com.efi.unofficial' // http://maven.apache.org/guides/mini/guide-naming-conventions.html
+archivesBaseName = 'EFI-Unofficial'
 
 // Mojang ships Java 17 to end users in 1.18+, so your mod should target Java 17.
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
@@ -29,7 +30,7 @@ java.toolchain.languageVersion = JavaLanguageVersion.of(17)
 println "Java: ${System.getProperty 'java.version'}, JVM: ${System.getProperty 'java.vm.version'} (${System.getProperty 'java.vendor'}), Arch: ${System.getProperty 'os.arch'}"
 minecraft {
 
-    mappings channel: 'official', version: '1.18.2'
+    mappings channel: 'official', version: '1.20.1'
     accessTransformer = file('src/main/resources/META-INF/accesstransformer.cfg')
 
     runs {
@@ -40,10 +41,10 @@ minecraft {
 
             property 'forge.logging.console.level', 'debug'
 
-            property 'forge.enabledGameTestNamespaces', 'examplemod'
+            property 'forge.enabledGameTestNamespaces', 'efi_unofficial'
 
             mods {
-                examplemod {
+                efi_unofficial {
                     source sourceSets.main
                 }
             }
@@ -56,10 +57,10 @@ minecraft {
 
             property 'forge.logging.console.level', 'debug'
 
-            property 'forge.enabledGameTestNamespaces', 'examplemod'
+            property 'forge.enabledGameTestNamespaces', 'efi_unofficial'
 
             mods {
-                examplemod {
+                efi_unofficial {
                     source sourceSets.main
                 }
             }
@@ -72,10 +73,10 @@ minecraft {
 
             property 'forge.logging.console.level', 'debug'
 
-            property 'forge.enabledGameTestNamespaces', 'examplemod'
+            property 'forge.enabledGameTestNamespaces', 'efi_unofficial'
 
             mods {
-                examplemod {
+                efi_unofficial {
                     source sourceSets.main
                 }
             }
@@ -88,10 +89,10 @@ minecraft {
 
             property 'forge.logging.console.level', 'debug'
 
-            args '--mod', 'examplemod', '--all', '--output', file('src/generated/resources/'), '--existing', file('src/main/resources/')
+            args '--mod', 'efi_unofficial', '--all', '--output', file('src/generated/resources/'), '--existing', file('src/main/resources/')
 
             mods {
-                examplemod {
+                efi_unofficial {
                     source sourceSets.main
                 }
             }
@@ -103,13 +104,10 @@ minecraft {
 sourceSets.main.resources { srcDir 'src/generated/resources' }
 
 repositories {
-    maven {
-        url 'https://www.cursemaven.com'
-        content{
-            includeGroup "curse.maven"
-        }
+    flatDir {
+        dirs '../CNPC-EpicFight-Addon---hotfix/lib'
     }
-
+    maven { url = 'https://cursemaven.com' }
 }
 
 mixin {
@@ -118,22 +116,22 @@ mixin {
 }
 
 dependencies {
-
-    minecraft 'net.minecraftforge:forge:1.18.2-40.2.17'
-    implementation fg.deobf("curse.maven:epic-fight-mod-405076:4922082")
-    implementation fg.deobf("curse.maven:weapons-of-miracles-epicfight-918614:5135428")
+    minecraft 'net.minecraftforge:forge:1.20.1-47.4.0'
+    implementation fg.deobf("curse.maven:epic-fight-mod-405076:7919289")
+    compileOnly fg.deobf("curse.maven:timeless-and-classics-zero-1028108:7745481")
+    compileOnly fg.deobf("curse.maven:customnpcs-unofficial-1052708:7694841")
     annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
 }
 
 jar {
     manifest {
         attributes([
-                "Specification-Title"     : "examplemod",
-                "Specification-Vendor"    : "examplemodsareus",
+                "Specification-Title"     : "EFI-Unofficial",
+                "Specification-Vendor"    : "EFI-Unofficial",
                 "Specification-Version"   : "1", // We are version 1 of ourselves
                 "Implementation-Title"    : project.name,
                 "Implementation-Version"  : project.jar.archiveVersion,
-                "Implementation-Vendor"   : "examplemodsareus",
+                "Implementation-Vendor"   : "EFI-Unofficial",
                 "Implementation-Timestamp": new Date().format("yyyy-MM-dd'T'HH:mm:ssZ")
         ])
     }

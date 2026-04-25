@@ -36,7 +36,7 @@ public class GuardGoal extends Goal {
         this.targetInactiontime = -1;
         this.mobpatch.setParryCounter(0);
         mobpatch.setBlocking(false);
-        mobpatch.getAnimator().resetLivingAnimations();
+        mobpatch.modifyLivingMotionByCurrentItem(false);
     }
 
     private boolean checkTargetValid() {

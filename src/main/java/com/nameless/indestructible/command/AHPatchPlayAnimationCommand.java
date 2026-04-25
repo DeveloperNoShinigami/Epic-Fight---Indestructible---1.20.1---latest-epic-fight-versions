@@ -11,9 +11,10 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.world.entity.Entity;
+import yesman.epicfight.api.animation.AnimationManager;
+import yesman.epicfight.api.animation.AnimationManager.AnimationAccessor;
 import yesman.epicfight.api.animation.types.StaticAnimation;
-import yesman.epicfight.main.EpicFightMod;
-import yesman.epicfight.network.server.SPPlayAnimation;
+import yesman.epicfight.network.server.SPAnimatorControl;
 import yesman.epicfight.world.capabilities.EpicFightCapabilities;
 import yesman.epicfight.world.capabilities.entitypatch.LivingEntityPatch;
 
@@ -31,7 +32,7 @@ public class AHPatchPlayAnimationCommand implements Command<CommandSourceStack> 
     @Override
     public int run(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
         Entity living = EntityArgument.getEntity(context, "living_entity");
-        StaticAnimation animation = EpicFightMod.getInstance().animationManager.findAnimationByPath(StringArgumentType.getString(context, "animation"));
+        AnimationAccessor<? extends StaticAnimation> animation = AnimationManager.byKey(StringArgumentType.getString(context, "animation"));
         float convert_time = FloatArgumentType.getFloat(context, "convert_time");
         float speed = FloatArgumentType.getFloat(context, "speed");
         LivingEntityPatch<?> livingEntityPatch = EpicFightCapabilities.getEntityPatch(living, LivingEntityPatch.class);
@@ -40,8 +41,8 @@ public class AHPatchPlayAnimationCommand implements Command<CommandSourceStack> 
                 AHPatch.setBlocking(false);
                 AHPatch.setAttackSpeed(speed);
                 AHPatch.resetMotion();
-                AHPatch.playAnimationSynchronized(animation, convert_time, SPPlayAnimation::new);
-            } else livingEntityPatch.playAnimationSynchronized(animation, convert_time, SPPlayAnimation::new);
+                AHPatch.playAnimationSynchronized(animation, convert_time, SPAnimatorControl::new);
+            } else livingEntityPatch.playAnimationSynchronized(animation, convert_time, SPAnimatorControl::new);
         }
         return 1;
     }

@@ -21,16 +21,22 @@ import net.minecraft.nbt.*;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.server.packs.resources.SimpleJsonResourceReloadListener;
+import net.minecraft.sounds.SoundEvent;
 import net.minecraft.util.profiling.ProfilerFiller;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.ai.attributes.Attribute;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.InteractionHand;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.api.distmarker.OnlyIn;
 import net.minecraftforge.registries.ForgeRegistries;
+import yesman.epicfight.api.animation.AnimationManager;
+import yesman.epicfight.api.animation.AnimationManager.AnimationAccessor;
 import yesman.epicfight.api.animation.LivingMotion;
 import yesman.epicfight.api.animation.types.StaticAnimation;
+import yesman.epicfight.api.asset.AssetAccessor;
 import yesman.epicfight.api.client.model.Meshes;
 import yesman.epicfight.api.collider.Collider;
 import yesman.epicfight.api.collider.MultiOBBCollider;
@@ -39,10 +45,18 @@ import yesman.epicfight.api.data.reloader.MobPatchReloadListener;
 import yesman.epicfight.api.model.Armature;
 import yesman.epicfight.client.ClientEngine;
 import yesman.epicfight.client.mesh.HumanoidMesh;
+import yesman.epicfight.data.conditions.Condition;
+import yesman.epicfight.data.conditions.entity.HealthPoint;
+import yesman.epicfight.data.conditions.entity.RandomChance;
+import yesman.epicfight.data.conditions.entity.TargetInDistance;
+import yesman.epicfight.data.conditions.entity.TargetInEyeHeight;
+import yesman.epicfight.data.conditions.entity.TargetInPov;
+import yesman.epicfight.gameasset.Animations;
 import yesman.epicfight.gameasset.Armatures;
 import yesman.epicfight.main.EpicFightMod;
+import yesman.epicfight.main.EpicFightSharedConstants;
 import yesman.epicfight.model.armature.HumanoidArmature;
-import yesman.epicfight.network.server.SPPlayAnimation;
+import yesman.epicfight.particle.HitParticleType;
 import yesman.epicfight.world.capabilities.entitypatch.EntityPatch;
 import yesman.epicfight.world.capabilities.entitypatch.Faction;
 import yesman.epicfight.world.capabilities.entitypatch.HumanoidMobPatch;
@@ -68,6 +82,7 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
     private static final Gson GSON = (new GsonBuilder()).create();
     private static final Map<EntityType<?>, CompoundTag> TAGMAP = Maps.newHashMap();
     private static final Map<EntityType<?>, MobPatchReloadListener.AbstractMobPatchProvider> ADVANCED_MOB_PATCH_PROVIDERS = Maps.newHashMap();
+    private static final List<AdvancedCustomHumanoidMobPatchProvider> NBT_TAG_PROVIDERS = Lists.newArrayList();
 
     public AdvancedMobpatchReloader() {
         super(GSON, "advanced_mobpatch");
@@ -75,32 +90,53 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
 
     @Override
     protected void apply(Map<ResourceLocation, JsonElement> objectIn, ResourceManager resourceManagerIn, ProfilerFiller profilerIn) {
+        // Clear both provider maps on reload
+        ADVANCED_MOB_PATCH_PROVIDERS.clear();
+        NBT_TAG_PROVIDERS.clear();
+        TAGMAP.clear();
+
         for (Map.Entry<ResourceLocation, JsonElement> entry : objectIn.entrySet()) {
             ResourceLocation rl = entry.getKey();
-            String pathString = rl.getPath();
-            ResourceLocation registryName = new ResourceLocation(rl.getNamespace(), pathString);
-
-            if (!ForgeRegistries.ENTITIES.containsKey(registryName)) {
-                Indestructible.LOGGER.warn("[Custom Entity] Entity named " + registryName + " does not exist");
-                continue;
-            }
-
-            EntityType<?> entityType = ForgeRegistries.ENTITIES.getValue(registryName);
             CompoundTag tag = null;
 
             try {
                 tag = TagParser.parseTag(entry.getValue().toString());
             } catch (CommandSyntaxException e) {
-                e.printStackTrace();
+                Indestructible.LOGGER.error("[Advanced Mobpatch] Failed to parse JSON for " + rl, e);
+                continue;
             }
 
-            ADVANCED_MOB_PATCH_PROVIDERS.put(entityType, deserializeMobPatchProvider(entityType, tag, false));
+            // ===== NBT_TAG PATH: Check for nbt_tag field =====
+            if (tag.contains("nbt_tag")) {
+                try {
+                    String nbtTagString = tag.getString("nbt_tag");
+                    CompoundTag nbtMatcher = TagParser.parseTag(nbtTagString);
+                    AdvancedCustomHumanoidMobPatchProvider provider = deserializeMobPatchProvider(null, tag, false);
+                    provider.nbtMatcher = nbtMatcher;
+                    NBT_TAG_PROVIDERS.add(provider);
+                    Indestructible.LOGGER.info("[Advanced Mobpatch] Loaded NBT-tag provider from " + rl + " with matcher: " + nbtTagString);
+                } catch (CommandSyntaxException e) {
+                    Indestructible.LOGGER.error("[Advanced Mobpatch] Invalid SNBT in nbt_tag field for " + rl, e);
+                    continue;
+                }
+            } else {
+                // ===== ENTITY_TYPE PATH: Filename must match entity registry key =====
+                String pathString = rl.getPath();
+                ResourceLocation registryName = ResourceLocation.fromNamespaceAndPath(rl.getNamespace(), pathString);
 
-            EntityPatchProvider.putCustomEntityPatch(entityType, (entity) -> () -> ADVANCED_MOB_PATCH_PROVIDERS.get(entity.getType()).get(entity));
-            TAGMAP.put(entityType, filterClientData(tag));
+                if (!ForgeRegistries.ENTITY_TYPES.containsKey(registryName)) {
+                    Indestructible.LOGGER.warn("[Advanced Mobpatch] Entity named " + registryName + " does not exist");
+                    continue;
+                }
 
-            if (EpicFightMod.isPhysicalClient()) {
-                ClientEngine.getInstance().renderEngine.registerCustomEntityRenderer(entityType, tag.contains("preset") ? tag.getString("preset") : tag.getString("renderer"));
+                EntityType<?> entityType = ForgeRegistries.ENTITY_TYPES.getValue(registryName);
+                ADVANCED_MOB_PATCH_PROVIDERS.put(entityType, deserializeMobPatchProvider(entityType, tag, false));
+                EntityPatchProvider.putCustomEntityPatch(entityType, (entity) -> () -> ADVANCED_MOB_PATCH_PROVIDERS.get(entity.getType()).get(entity));
+                TAGMAP.put(entityType, filterClientData(tag));
+
+                if (EpicFightSharedConstants.isPhysicalClient()) {
+                    ClientEngine.getInstance().renderEngine.registerCustomEntityRenderer(entityType, tag.contains("preset") ? tag.getString("preset") : tag.getString("renderer"), tag);
+                }
             }
         }
     }
@@ -108,32 +144,38 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
     public static AdvancedCustomHumanoidMobPatchProvider deserializeMobPatchProvider(EntityType<?> entityType, CompoundTag tag, boolean clientSide) {
             AdvancedCustomHumanoidMobPatchProvider provider = new AdvancedCustomHumanoidMobPatchProvider();
             provider.attributeValues = deserializeAdvancedAttributes(tag.getCompound("attributes"));
-            ResourceLocation modelLocation = new ResourceLocation(tag.getString("model"));
-            ResourceLocation armatureLocation = new ResourceLocation(tag.getString("armature"));
+            ResourceLocation modelLocation = ResourceLocation.parse(tag.getString("model"));
+            ResourceLocation armatureLocation = ResourceLocation.parse(tag.getString("armature"));
 
-            modelLocation = new ResourceLocation(modelLocation.getNamespace(), "animmodels/" + modelLocation.getPath() + ".json");
-            armatureLocation = new ResourceLocation(armatureLocation.getNamespace(), "animmodels/" + armatureLocation.getPath() + ".json");
+            if (EpicFightSharedConstants.isPhysicalClient()) {
+                Meshes.getOrCreate(modelLocation, (jsonAssetLoader) -> jsonAssetLoader.loadSkinnedMesh(HumanoidMesh::new));
+            }
 
-            if (EpicFightMod.isPhysicalClient()) {
-                Minecraft mc = Minecraft.getInstance();
-                Meshes.getOrCreateAnimatedMesh(mc.getResourceManager(), modelLocation, HumanoidMesh::new);
-                Armature armature = Armatures.getOrCreateArmature(mc.getResourceManager(), armatureLocation, HumanoidArmature::new);
-                Armatures.registerEntityTypeArmature(entityType, armature);
-            } else {
-                Armature armature = Armatures.getOrCreateArmature(null, armatureLocation, HumanoidArmature::new);
-                Armatures.registerEntityTypeArmature(entityType, armature);
+            provider.armature = Armatures.getOrCreate(armatureLocation, Armature::new);
+            if (entityType != null) {
+                Armatures.registerEntityTypeArmature(entityType, provider.armature);
             }
 
             provider.hasBossBar = tag.contains("boss_bar") && tag.getBoolean("boss_bar");
             provider.name = tag.contains("boss_bar") && tag.contains("custom_name") ? tag.getString("custom_name") : null;
             provider.bossBar = tag.contains("boss_bar") && tag.contains("custom_texture") ? ResourceLocation.tryParse(tag.getString("custom_texture")) : null;
+                provider.swingSound = tag.contains("swing_sound")
+                    ? ForgeRegistries.SOUND_EVENTS.getValue(ResourceLocation.parse(tag.getString("swing_sound")))
+                    : null;
+                provider.hitSound = tag.contains("hit_sound")
+                    ? ForgeRegistries.SOUND_EVENTS.getValue(ResourceLocation.parse(tag.getString("hit_sound")))
+                    : null;
+                provider.hitParticle = tag.contains("hit_particle")
+                    ? (HitParticleType) ForgeRegistries.PARTICLE_TYPES.getValue(ResourceLocation.parse(tag.getString("hit_particle")))
+                    : null;
 
 
             provider.defaultAnimations = deserializeDefaultAnimations(tag.getCompound("default_livingmotions"));
-            provider.faction = Faction.valueOf(tag.getString("faction").toUpperCase(Locale.ROOT));
+            provider.faction = Faction.ENUM_MANAGER.getOrThrow(tag.getString("faction"));
             provider.scale = tag.getCompound("attributes").contains("scale") ? (float)tag.getCompound("attributes").getDouble("scale") : 1.0F;
             provider.maxStunShield = tag.getCompound("attributes").contains("max_stun_shield") ? (float)tag.getCompound("attributes").getDouble("max_stun_shield") : 0F;
             if (!clientSide) {
+                provider.ammoSlots = tag.contains("ammo_slots", 9) ? deserializeAmmoSlots(tag.getList("ammo_slots", 10)) : List.of();
                 provider.stunAnimations = deserializeStunAnimations(tag.getCompound("stun_animations"));
                 provider.chasingSpeed = tag.getCompound("attributes").getDouble("chasing_speed");
                 provider.AHCombatBehaviors = deserializeAdvancedCombatBehaviors(tag.getList("combat_behavior", 10));
@@ -142,7 +184,11 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
                 provider.regenStaminaStandbyTime = tag.getCompound("attributes").contains("stamina_regan_delay") ? tag.getCompound("attributes").getInt("stamina_regan_delay") : 30;
                 provider.hasStunReduction = !tag.getCompound("attributes").contains("has_stun_reduction") || tag.getCompound("attributes").getBoolean("has_stun_reduction");
                 provider.reganShieldStandbyTime = tag.getCompound("attributes").contains("stun_shield_regan_delay") ? tag.getCompound("attributes").getInt("stun_shield_regan_delay") : 30;
-                provider.reganShieldMultiply = tag.getCompound("attributes").contains("stun_shield_regan_multiply") ? (float)tag.getCompound("attributes").getDouble("stun_shield_multiply") : 1F;
+                provider.reganShieldMultiply = tag.getCompound("attributes").contains("stun_shield_regan_multiply")
+                    ? (float)tag.getCompound("attributes").getDouble("stun_shield_regan_multiply")
+                    : (tag.getCompound("attributes").contains("stun_shield_multiply")
+                        ? (float)tag.getCompound("attributes").getDouble("stun_shield_multiply")
+                        : 1F);
                 provider.staminaLoseMultiply = tag.getCompound("attributes").contains("stamina_lose_multiply") ? (float)tag.getCompound("attributes").getDouble("stamina_lose_multiply") : 0F;
                 provider.attackRadius = tag.getCompound("attributes").contains("attack_radius") ? (float)tag.getCompound("attributes").getDouble("attack_radius") : 1.5F;
                 provider.guardRadius = tag.getCompound("attributes").contains("guard_radius") ? (float)tag.getCompound("attributes").getDouble("guard_radius") : 3F;
@@ -165,17 +211,29 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
         extract.put("faction", original.get("faction"));
         extract.put("default_livingmotions", original.get("default_livingmotions"));
         extract.put("attributes", original.get("attributes"));
+        if (original.contains("nbt_tag")) {
+            extract.put("nbt_tag", original.get("nbt_tag"));
+        }
         if(original.contains("boss_bar")){
             extract.put("boss_bar", original.get("boss_bar"));
             if(original.contains("custom_name"))extract.put("custom_name", original.get("custom_name"));
             if(original.contains("custom_texture"))extract.put("custom_texture", original.get("custom_texture"));
+        }
+        if (original.contains("swing_sound")) {
+            extract.put("swing_sound", original.get("swing_sound"));
+        }
+        if (original.contains("hit_sound")) {
+            extract.put("hit_sound", original.get("hit_sound"));
+        }
+        if (original.contains("hit_particle")) {
+            extract.put("hit_particle", original.get("hit_particle"));
         }
         return extract;
     }
 
     public static Stream<CompoundTag> getDataStream() {
         Stream<CompoundTag> tagStream = TAGMAP.entrySet().stream().map((entry) -> {
-            entry.getValue().putString("id", entry.getKey().getRegistryName().toString());
+            entry.getValue().putString("id", ForgeRegistries.ENTITY_TYPES.getKey(entry.getKey()).toString());
             return entry.getValue();
         });
 
@@ -186,27 +244,94 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
         return TAGMAP.size();
     }
 
+    public static List<AdvancedCustomHumanoidMobPatchProvider> getNbtTagProviders() {
+        return NBT_TAG_PROVIDERS;
+    }
+
     @OnlyIn(Dist.CLIENT)
     public static void processServerPacket(SPDatapackSync packet) {
-        for (CompoundTag tag : packet.getTags()) {
+        ADVANCED_MOB_PATCH_PROVIDERS.clear();
+        NBT_TAG_PROVIDERS.clear();
 
-            EntityType<?> entityType = ForgeRegistries.ENTITIES.getValue(new ResourceLocation(tag.getString("id")));
-            ADVANCED_MOB_PATCH_PROVIDERS.put(entityType, deserializeMobPatchProvider(entityType, tag, true));
-            EntityPatchProvider.putCustomEntityPatch(entityType, (entity) -> () -> ADVANCED_MOB_PATCH_PROVIDERS.get(entity.getType()).get(entity));
-            Minecraft mc = Minecraft.getInstance();
-            ResourceLocation armatureLocation = new ResourceLocation(tag.getString("armature"));
-            armatureLocation = new ResourceLocation(armatureLocation.getNamespace(), "animmodels/" + armatureLocation.getPath() + ".json");
-            boolean humanoid = tag.getBoolean("isHumanoid");
-            Armature armature = Armatures.getOrCreateArmature(mc.getResourceManager(), armatureLocation, humanoid ? Armature::new : HumanoidArmature::new);
-            Armatures.registerEntityTypeArmature(entityType, armature);
-            ClientEngine.getInstance().renderEngine.registerCustomEntityRenderer(entityType, tag.contains("preset") ? tag.getString("preset") : tag.getString("renderer"));
+        for (CompoundTag tag : packet.getTags()) {
+            // Handle NBT_TAG entries
+            if (tag.contains("nbt_tag")) {
+                try {
+                    String nbtTagString = tag.getString("nbt_tag");
+                    CompoundTag nbtMatcher = TagParser.parseTag(nbtTagString);
+                    AdvancedCustomHumanoidMobPatchProvider provider = deserializeMobPatchProvider(null, tag, true);
+                    provider.nbtMatcher = nbtMatcher;
+                    NBT_TAG_PROVIDERS.add(provider);
+                } catch (CommandSyntaxException e) {
+                    Indestructible.LOGGER.error("[Advanced Mobpatch] Invalid SNBT in nbt_tag field on client", e);
+                }
+            } else {
+                // Handle entity-type entries
+                EntityType<?> entityType = ForgeRegistries.ENTITY_TYPES.getValue(ResourceLocation.parse(tag.getString("id")));
+                ADVANCED_MOB_PATCH_PROVIDERS.put(entityType, deserializeMobPatchProvider(entityType, tag, true));
+                EntityPatchProvider.putCustomEntityPatch(entityType, (entity) -> () -> ADVANCED_MOB_PATCH_PROVIDERS.get(entity.getType()).get(entity));
+                ResourceLocation armatureLocation = ResourceLocation.parse(tag.getString("armature"));
+                boolean humanoid = tag.getBoolean("isHumanoid");
+                AssetAccessor<? extends Armature> armature = Armatures.getOrCreate(armatureLocation, humanoid ? Armature::new : HumanoidArmature::new);
+                Armatures.registerEntityTypeArmature(entityType, armature);
+                ClientEngine.getInstance().renderEngine.registerCustomEntityRenderer(entityType, tag.contains("preset") ? tag.getString("preset") : tag.getString("renderer"), tag);
+            }
+        }
+    }
+
+    public enum AmmoSlotRule {
+        SUPPLY_OR_RELOAD_FROM;
+    }
+
+    public enum AmmoSlotType {
+        EQUIPMENT,
+        INVENTORY,
+        CUSTOMNPC_PROJECTILE,
+        CUSTOMNPC_DROP
+    }
+
+    public static class AmmoSlotConfig {
+        private final String slot;
+        private final AmmoSlotRule rule;
+        private final AmmoSlotType type;
+        @Nullable
+        private final EquipmentSlot equipmentSlot;
+        private final int index;
+
+        public AmmoSlotConfig(String slot, AmmoSlotRule rule, AmmoSlotType type, @Nullable EquipmentSlot equipmentSlot, int index) {
+            this.slot = slot;
+            this.rule = rule;
+            this.type = type;
+            this.equipmentSlot = equipmentSlot;
+            this.index = index;
+        }
+
+        public String getSlot() {
+            return this.slot;
+        }
+
+        public AmmoSlotRule getRule() {
+            return this.rule;
+        }
+
+        public AmmoSlotType getType() {
+            return this.type;
+        }
+
+        @Nullable
+        public EquipmentSlot getEquipmentSlot() {
+            return this.equipmentSlot;
+        }
+
+        public int getIndex() {
+            return this.index;
         }
     }
 
 
     public static class AdvancedCustomHumanoidMobPatchProvider extends MobPatchReloadListener.AbstractMobPatchProvider {
         protected Map<WeaponCategory, Map<Style, CombatBehaviors.Builder<HumanoidMobPatch<?>>>> AHCombatBehaviors;
-        protected Map<WeaponCategory, Map<Style, Set<Pair<LivingMotion, StaticAnimation>>>> AHWeaponMotions;
+        protected Map<WeaponCategory, Map<Style, Set<Pair<LivingMotion, AnimationAccessor<? extends StaticAnimation>>>>> AHWeaponMotions;
         protected Map<WeaponCategory, Map<Style, GuardMotion>> guardMotions;
         protected int regenStaminaStandbyTime;
         protected boolean hasStunReduction;
@@ -216,8 +341,8 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
         protected float staminaLoseMultiply;
         protected float guardRadius;
         protected float attackRadius;
-        protected List<Pair<LivingMotion, StaticAnimation>> defaultAnimations;
-        protected Map<StunType, StaticAnimation> stunAnimations;
+        protected List<Pair<LivingMotion, AnimationAccessor<? extends StaticAnimation>>> defaultAnimations;
+        protected Map<StunType, AnimationAccessor<? extends StaticAnimation>> stunAnimations;
         protected Map<Attribute, Double> attributeValues;
         protected Faction faction;
         protected double chasingSpeed;
@@ -225,7 +350,14 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
         protected boolean hasBossBar;
         protected ResourceLocation bossBar;
         protected String name;
+        protected SoundEvent swingSound;
+        protected SoundEvent hitSound;
+        protected HitParticleType hitParticle;
         protected List<CommandEvent.StunEvent> stunEvent;
+        protected List<AmmoSlotConfig> ammoSlots = List.of();
+        protected AssetAccessor<? extends Armature> armature;
+        @Nullable
+        protected CompoundTag nbtMatcher;
         public AdvancedCustomHumanoidMobPatchProvider() {
         }
 
@@ -234,7 +366,7 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
             return new AdvancedCustomHumanoidMobPatch(this.faction, this);
         }
 
-        public Map<WeaponCategory, Map<Style, Set<Pair<LivingMotion, StaticAnimation>>>> getHumanoidWeaponMotions() {
+        public Map<WeaponCategory, Map<Style, Set<Pair<LivingMotion, AnimationAccessor<? extends StaticAnimation>>>>> getHumanoidWeaponMotions() {
             return this.AHWeaponMotions;
         }
 
@@ -245,11 +377,11 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
         public Map<WeaponCategory, Map<Style, GuardMotion>> getGuardMotions(){
             return this.guardMotions;
         }
-        public List<Pair<LivingMotion, StaticAnimation>> getDefaultAnimations() {
+        public List<Pair<LivingMotion, AnimationAccessor<? extends StaticAnimation>>> getDefaultAnimations() {
             return this.defaultAnimations;
         }
 
-        public Map<StunType, StaticAnimation> getStunAnimations() {
+        public Map<StunType, AnimationAccessor<? extends StaticAnimation>> getStunAnimations() {
             return this.stunAnimations;
         }
 
@@ -273,12 +405,25 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
         public float getStaminaLoseMultiply(){return this.staminaLoseMultiply;}
         public float getGuardRadius(){return this.guardRadius;}
         public float getAttackRadius(){return this.attackRadius;}
+        public SoundEvent getSwingSound() {return this.swingSound;}
+        public SoundEvent getHitSound() {return this.hitSound;}
+        public HitParticleType getHitParticle() {return this.hitParticle;}
         public List<CommandEvent.StunEvent> getStunEvent(){
             return this.stunEvent;
+        }
+        public List<AmmoSlotConfig> getAmmoSlots() {
+            return this.ammoSlots;
         }
         public boolean hasBossBar(){return this.hasBossBar;}
         public String getName(){return this.name;}
         public ResourceLocation getBossBar(){return this.bossBar;}
+        public void registerArmature(EntityType<?> entityType) {
+            if (entityType != null && this.armature != null) {
+                Armatures.registerEntityTypeArmature(entityType, this.armature);
+            }
+        }
+        @Nullable
+        public CompoundTag getNbtMatcher() {return this.nbtMatcher;}
     }
     public static Map<Attribute, Double> deserializeAdvancedAttributes(CompoundTag tag) {
         Map<Attribute, Double> attributes = Maps.newHashMap();
@@ -320,16 +465,16 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
         for (int i = 0; i < tag.size(); i++) {
             CompoundTag list = tag.getCompound(i);
             Style style = Style.ENUM_MANAGER.get(list.getString("style"));
-            StaticAnimation guard = list.contains("guard") ? EpicFightMod.getInstance().animationManager.findAnimationByPath(list.getString("guard")) : GuardAnimations.MOB_LONGSWORD_GUARD;
+            AnimationAccessor<? extends StaticAnimation> guard = list.contains("guard") ? AnimationManager.byKey(ResourceLocation.parse(list.getString("guard"))) : getDefaultGuardAnimationAccessor();
             float guard_cost = list.contains("stamina_cost_multiply") ? (float)list.getDouble("stamina_cost_multiply") : 1F;
             boolean canBlockProjectile = list.contains("can_block_projectile") && list.getBoolean("can_block_projectile");
             float parry_cost = list.contains("parry_cost_multiply") ? (float)list.getDouble("parry_cost_multiply") : 0.5F;
-            StaticAnimation[] parry_animations = null;
+            AnimationAccessor<? extends StaticAnimation>[] parry_animations = null;
             if(list.contains("parry_animation")){
                 ListTag animationId = list.getList("parry_animation", 8);
-                parry_animations = new StaticAnimation[animationId.size()];
+                parry_animations = new AnimationAccessor[animationId.size()];
                 for (int j = 0; j < animationId.size(); j++) {
-                    StaticAnimation parry_animation = EpicFightMod.getInstance().animationManager.findAnimationByPath(animationId.getString(j));
+                    AnimationAccessor<? extends StaticAnimation> parry_animation = AnimationManager.byKey(ResourceLocation.parse(animationId.getString(j)));
                     parry_animations[j] = parry_animation;
                 }
             }
@@ -357,6 +502,14 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
         return map;
     }
 
+    private static AnimationAccessor<? extends StaticAnimation> getDefaultGuardAnimationAccessor() {
+        if (GuardAnimations.MOB_LONGSWORD_GUARD != null) {
+            return AnimationManager.byKey(GuardAnimations.MOB_LONGSWORD_GUARD.getRegistryName());
+        }
+
+        return Animations.LONGSWORD_GUARD;
+    }
+
     private static <T extends MobPatch<?>> CombatBehaviors.Builder<T> deserializeAdvancedBehaviorsBuilder(ListTag tag) {
         CombatBehaviors.Builder<T> builder = CombatBehaviors.builder();
 
@@ -377,7 +530,7 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
                 int phase = behavior.contains("set_phase") ? behavior.getInt("set_phase") : -1;
                 int hurt_level = behavior.contains("end_by_hurt_level") ? behavior.getInt("end_by_hurt_level") : 2;
                 if(behavior.contains("animation")) {
-                    StaticAnimation animation = EpicFightMod.getInstance().animationManager.findAnimationByPath(behavior.getString("animation"));
+                    AnimationAccessor<? extends StaticAnimation> animation = AnimationManager.byKey(ResourceLocation.parse(behavior.getString("animation")));
                     float speed = behavior.contains("play_speed") ? (float) behavior.getDouble("play_speed") : 1F;
                     float stamina = behavior.contains("stamina") ? (float) behavior.getDouble("stamina") : 0F;
                     float convertTime = behavior.contains("convert_time") ? (float)behavior.getDouble("convert_time") : 0F;
@@ -389,9 +542,11 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
                     behaviorBuilder.behavior(customAttackAnimation(motion, modifier, timeCommandList, hitCommandList, blockedEvents, phase, hurt_level));
                 } else if (behavior.contains("guard")){
                     int guardTime = behavior.getInt("guard");
-                    StaticAnimation counter = behavior.contains("counter") ? EpicFightMod.getInstance().animationManager.findAnimationByPath(behavior.getString("counter")) : GuardAnimations.MOB_COUNTER_ATTACK;
+                    AnimationAccessor<? extends StaticAnimation> counter = behavior.contains("counter") ? AnimationManager.byKey(ResourceLocation.parse(behavior.getString("counter"))) : AnimationManager.byKey(GuardAnimations.MOB_COUNTER_ATTACK.getRegistryName());
                     boolean isParry = behavior.contains("parry") && behavior.getBoolean("parry");
-                    int parry_times = behavior.contains("parry_times") ? behavior.getInt("parry_times") : Integer.MAX_VALUE;
+                    int parry_times = behavior.contains("parry_times")
+                            ? behavior.getInt("parry_times")
+                            : (behavior.contains("parry_time") ? behavior.getInt("parry_time") : Integer.MAX_VALUE);
                     int stun_immunity_time = behavior.contains("stun_immunity_time") ? behavior.getInt("stun_immunity_time") : 0;
                     float cost = behavior.contains("counter_cost") ? (float) behavior.getDouble("counter_cost") : 3.0F;
                     float chance = behavior.contains("counter_chance") ? (float)behavior.getDouble("counter_chance") : 0.3F;
@@ -406,11 +561,58 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
                     float forward = behavior.contains("z_axis") ? (float) behavior.getDouble("z_axis") : 0F;
                     float clockwise = behavior.contains("x_axis") ? (float) behavior.getDouble("x_axis") : 0F;
                     behaviorBuilder.behavior(setStrafing(strafingTime, inactionTime, forward, clockwise, phase, hurt_level));
+                } else if (behavior.contains("gear_swap")) {
+                    CompoundTag gearSwap = behavior.getCompound("gear_swap");
+                    if (!gearSwap.contains("item", 8)) {
+                        loggerNote(Indestructible.LOGGER, "gear_swap", "item", "string", "");
+                    } else {
+                        ResourceLocation itemId = ResourceLocation.parse(gearSwap.getString("item"));
+                        EquipmentSlot slot = gearSwap.contains("slot", 8) ? parseEquipmentSlot(gearSwap.getString("slot")) : null;
+                        boolean allowEquipped = !gearSwap.contains("allow_equipped") || gearSwap.getBoolean("allow_equipped");
+                        boolean storeOldGear = !gearSwap.contains("store_gear") || gearSwap.getBoolean("store_gear");
+                        float stamina = gearSwap.contains("stamina") ? (float) gearSwap.getDouble("stamina") : 0F;
+                        int inactionTime = gearSwap.contains("inaction_time") ? gearSwap.getInt("inaction_time") : 0;
+                        SoundEvent swapSound = gearSwap.contains("sound", 8)
+                                ? ForgeRegistries.SOUND_EVENTS.getValue(ResourceLocation.parse(gearSwap.getString("sound")))
+                                : null;
+                        behaviorBuilder.behavior(setGearSwap(itemId, slot, allowEquipped, storeOldGear, stamina, inactionTime, swapSound, phase, hurt_level));
+                    }
+                } else if (behavior.contains("reload")) {
+                    int reloadTime = behavior.getInt("reload");
+                    InteractionHand hand = behavior.contains("hand", 8) ? parseInteractionHand(behavior.getString("hand")) : null;
+                    boolean requireAmmo = !behavior.contains("require_ammo") || behavior.getBoolean("require_ammo");
+                    float stamina = behavior.contains("stamina") ? (float) behavior.getDouble("stamina") : 0F;
+                    List<CommandEvent.TimeStampedEvent> timeCommandList = behavior.contains("command_list") ? deserializeTimeCommandList(behavior.getList("command_list", 10)) : null;
+                    behaviorBuilder.behavior(setReload(reloadTime, hand, requireAmmo, stamina, timeCommandList, phase, hurt_level));
+                } else if (behavior.contains("tacz_aim", 10)) {
+                    CompoundTag taczAim = behavior.getCompound("tacz_aim");
+                    InteractionHand hand = taczAim.contains("hand", 8) ? parseInteractionHand(taczAim.getString("hand")) : null;
+                    int inactionTime = taczAim.contains("inaction_time") ? taczAim.getInt("inaction_time") : 4;
+                    float stamina = taczAim.contains("stamina") ? (float) taczAim.getDouble("stamina") : 0F;
+                    List<CommandEvent.TimeStampedEvent> timeCommandList = taczAim.contains("command_list") ? deserializeTimeCommandList(taczAim.getList("command_list", 10)) : null;
+                    behaviorBuilder.behavior(setTaczAim(hand, inactionTime, stamina, timeCommandList, phase, hurt_level));
+                } else if (behavior.contains("tacz_aim", 3)) {
+                    int inactionTime = behavior.getInt("tacz_aim");
+                    InteractionHand hand = behavior.contains("hand", 8) ? parseInteractionHand(behavior.getString("hand")) : null;
+                    float stamina = behavior.contains("stamina") ? (float) behavior.getDouble("stamina") : 0F;
+                    List<CommandEvent.TimeStampedEvent> timeCommandList = behavior.contains("command_list") ? deserializeTimeCommandList(behavior.getList("command_list", 10)) : null;
+                    behaviorBuilder.behavior(setTaczAim(hand, inactionTime, stamina, timeCommandList, phase, hurt_level));
+                } else if (behavior.contains("tacz_shoot", 10)) {
+                    CompoundTag taczShoot = behavior.getCompound("tacz_shoot");
+                    String fireMode = taczShoot.contains("fire_mode", 8) ? taczShoot.getString("fire_mode") : null;
+                    float stamina = taczShoot.contains("stamina") ? (float) taczShoot.getDouble("stamina") : 0F;
+                    List<CommandEvent.TimeStampedEvent> timeCommandList = taczShoot.contains("command_list") ? deserializeTimeCommandList(taczShoot.getList("command_list", 10)) : null;
+                    behaviorBuilder.behavior(setTaczShoot(fireMode, stamina, timeCommandList, phase, hurt_level));
+                } else if (behavior.contains("tacz_shoot", 3)) {
+                    String fireMode = behavior.contains("fire_mode", 8) ? behavior.getString("fire_mode") : null;
+                    float stamina = behavior.contains("stamina") ? (float) behavior.getDouble("stamina") : 0F;
+                    List<CommandEvent.TimeStampedEvent> timeCommandList = behavior.contains("command_list") ? deserializeTimeCommandList(behavior.getList("command_list", 10)) : null;
+                    behaviorBuilder.behavior(setTaczShoot(fireMode, stamina, timeCommandList, phase, hurt_level));
                 }
 
                 for (int k = 0; k < conditionList.size(); k++) {
                     CompoundTag condition = conditionList.getCompound(k);
-                    CombatBehaviors.BehaviorPredicate<T> predicate = deserializeAdvancedBehaviorPredicate(condition.getString("predicate"), condition);
+                    Condition<T> predicate = deserializeAdvancedBehaviorPredicate(condition.getString("predicate"), condition);
                     behaviorBuilder.predicate(predicate);
                 }
 
@@ -452,23 +654,23 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
                 advancedCustomHumanoidMobPatch.setHurtResistLevel(hurtResist);
             }
             if(!mobpatch.getEntityState().turningLocked()){mobpatch.getOriginal().lookAt(mobpatch.getTarget(),30F,30F); }
-            mobpatch.playAnimationSynchronized(motion.animation(), motion.convertTime(), SPPlayAnimation::new);
+            mobpatch.playAnimationSynchronized(motion.animation(), motion.convertTime());
         };
     }
 
     public static GuardMotion deserializeSpecificGuardMotion(CompoundTag args){
         GuardMotion guardMotion = null;
         if(args.contains("guard") && args.contains("stamina_cost_multiply") && args.contains("can_block_projectile") && args.contains("parry_cost_multiply") && args.contains("parry_animation")) {
-            StaticAnimation guard = EpicFightMod.getInstance().animationManager.findAnimationByPath(args.getString("guard"));
+            AnimationAccessor<? extends StaticAnimation> guard = AnimationManager.byKey(ResourceLocation.parse(args.getString("guard")));
             float guard_cost = (float) args.getDouble("stamina_cost_multiply");
             boolean canBlockProjectile = args.getBoolean("can_block_projectile");
             float parry_cost = (float) args.getDouble("parry_cost_multiply");
-            StaticAnimation[] parry_animations = null;
+            AnimationAccessor<? extends StaticAnimation>[] parry_animations = null;
             if (args.contains("parry_animation")) {
                 ListTag animationId = args.getList("parry_animation", 8);
-                parry_animations = new StaticAnimation[animationId.size()];
+                parry_animations = new AnimationAccessor[animationId.size()];
                 for (int j = 0; j < animationId.size(); j++) {
-                    StaticAnimation parry_animation = EpicFightMod.getInstance().animationManager.findAnimationByPath(animationId.getString(j));
+                    AnimationAccessor<? extends StaticAnimation> parry_animation = AnimationManager.byKey(ResourceLocation.parse(animationId.getString(j)));
                     parry_animations[j] = parry_animation;
                 }
             }
@@ -482,7 +684,7 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
         return (mobpatch) -> {
             if(mobpatch instanceof AdvancedCustomHumanoidMobPatch<?> advancedCustomHumanoidMobPatch){
                 if(guard_motion != null) advancedCustomHumanoidMobPatch.specificGuardMotion(guard_motion);
-                advancedCustomHumanoidMobPatch.modifyLivingMotionByCurrentItem();
+                advancedCustomHumanoidMobPatch.modifyLivingMotionByCurrentItem(false);
                 advancedCustomHumanoidMobPatch.setBlocking(true);
                 advancedCustomHumanoidMobPatch.setBlockTick(guardTime);
                 advancedCustomHumanoidMobPatch.setParry(parry);
@@ -504,6 +706,104 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
                 advancedCustomHumanoidMobPatch.setStrafingDirection(forward, clockwise);
                 advancedCustomHumanoidMobPatch.setHurtResistLevel(hurtResist);
                 if(phase >= 0)advancedCustomHumanoidMobPatch.setPhase(phase);
+            }
+        };
+    }
+
+    public static <T extends MobPatch<?>> Consumer<T> setGearSwap(ResourceLocation itemId, @Nullable EquipmentSlot slot,
+                                                                   boolean allowEquipped, boolean storeOldGear, float stamina,
+                                                                   int inactionTime, @Nullable SoundEvent swapSound, int phase, int hurtResist) {
+        return (mobpatch) -> {
+            if (mobpatch instanceof AdvancedCustomHumanoidMobPatch<?> advancedCustomHumanoidMobPatch) {
+                if (stamina > 0.0F && advancedCustomHumanoidMobPatch.getStamina() < stamina) {
+                    return;
+                }
+
+                boolean swapped = advancedCustomHumanoidMobPatch.tryGearSwap(itemId, slot, allowEquipped, storeOldGear);
+                if (!swapped) {
+                    return;
+                }
+
+                if (stamina > 0.0F) {
+                    advancedCustomHumanoidMobPatch.setStamina(advancedCustomHumanoidMobPatch.getStamina() - stamina);
+                }
+
+                advancedCustomHumanoidMobPatch.setBlocking(false);
+                advancedCustomHumanoidMobPatch.setAttackSpeed(1.0F);
+                advancedCustomHumanoidMobPatch.resetActionTick();
+                advancedCustomHumanoidMobPatch.resetMotion();
+                advancedCustomHumanoidMobPatch.setInactionTime(Math.max(advancedCustomHumanoidMobPatch.getInactionTime(), inactionTime));
+                advancedCustomHumanoidMobPatch.setHurtResistLevel(hurtResist);
+                if (phase >= 0) advancedCustomHumanoidMobPatch.setPhase(phase);
+                if (swapSound != null) {
+                    advancedCustomHumanoidMobPatch.playSound(swapSound, 0.0F, 0.0F);
+                }
+            }
+        };
+    }
+
+    public static <T extends MobPatch<?>> Consumer<T> setReload(int reloadTime, @Nullable InteractionHand hand, boolean requireAmmo, float stamina,
+                                                                 @Nullable List<CommandEvent.TimeStampedEvent> timeEvents,
+                                                                 int phase, int hurtResist) {
+        return (mobpatch) -> {
+            if (mobpatch instanceof AdvancedCustomHumanoidMobPatch<?> advancedCustomHumanoidMobPatch) {
+                if (timeEvents != null) {
+                    for (CommandEvent.TimeStampedEvent event : timeEvents) {
+                        advancedCustomHumanoidMobPatch.getEventManager().addTimeStampedEvent(event);
+                    }
+                }
+
+                boolean started = advancedCustomHumanoidMobPatch.tryStartReload(hand, requireAmmo, reloadTime, stamina);
+                if (!started) {
+                    return;
+                }
+
+                advancedCustomHumanoidMobPatch.setHurtResistLevel(hurtResist);
+                if (phase >= 0) advancedCustomHumanoidMobPatch.setPhase(phase);
+            }
+        };
+    }
+
+    public static <T extends MobPatch<?>> Consumer<T> setTaczShoot(@Nullable String fireMode, float stamina,
+                                                                    @Nullable List<CommandEvent.TimeStampedEvent> timeEvents,
+                                                                    int phase, int hurtResist) {
+        return (mobpatch) -> {
+            if (mobpatch instanceof AdvancedCustomHumanoidMobPatch<?> advancedCustomHumanoidMobPatch) {
+                if (timeEvents != null) {
+                    for (CommandEvent.TimeStampedEvent event : timeEvents) {
+                        advancedCustomHumanoidMobPatch.getEventManager().addTimeStampedEvent(event);
+                    }
+                }
+
+                boolean started = advancedCustomHumanoidMobPatch.tryTaczShoot(stamina, fireMode);
+                if (!started) {
+                    return;
+                }
+
+                advancedCustomHumanoidMobPatch.setHurtResistLevel(hurtResist);
+                if (phase >= 0) advancedCustomHumanoidMobPatch.setPhase(phase);
+            }
+        };
+    }
+
+    public static <T extends MobPatch<?>> Consumer<T> setTaczAim(@Nullable InteractionHand hand, int inactionTime, float stamina,
+                                                                  @Nullable List<CommandEvent.TimeStampedEvent> timeEvents,
+                                                                  int phase, int hurtResist) {
+        return (mobpatch) -> {
+            if (mobpatch instanceof AdvancedCustomHumanoidMobPatch<?> advancedCustomHumanoidMobPatch) {
+                if (timeEvents != null) {
+                    for (CommandEvent.TimeStampedEvent event : timeEvents) {
+                        advancedCustomHumanoidMobPatch.getEventManager().addTimeStampedEvent(event);
+                    }
+                }
+
+                boolean started = advancedCustomHumanoidMobPatch.tryTaczAim(hand, inactionTime, stamina);
+                if (!started) {
+                    return;
+                }
+
+                advancedCustomHumanoidMobPatch.setHurtResistLevel(hurtResist);
+                if (phase >= 0) advancedCustomHumanoidMobPatch.setPhase(phase);
             }
         };
     }
@@ -595,20 +895,26 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
     }
 
 
-    public static <T extends MobPatch<?>> CombatBehaviors.BehaviorPredicate<T> deserializeAdvancedBehaviorPredicate(String type, CompoundTag args) {
-        CombatBehaviors.BehaviorPredicate<T> predicate = null;
+    public static <T extends MobPatch<?>> Condition<T> deserializeAdvancedBehaviorPredicate(String type, CompoundTag args) {
+        String predicateType = type;
+        int namespaceSeparator = type.indexOf(':');
+        if (namespaceSeparator >= 0 && namespaceSeparator + 1 < type.length()) {
+            predicateType = type.substring(namespaceSeparator + 1);
+        }
+
+        Condition<T> predicate = null;
         List<String[]> loggerNote = Lists.newArrayList();
 
-        switch (type) {
+        switch (predicateType) {
             case "random_chance":
                 if (!args.contains("chance", 6)) {
                     loggerNote.add(new String[] {"random_chance", "chance", "double", "0.0"});
                 }
 
-                predicate = new CombatBehaviors.RandomChance<>((float) args.getDouble("chance"));
+                predicate = castCondition(new RandomChance((float) args.getDouble("chance")));
                 break;
             case "within_eye_height":
-                predicate = new CombatBehaviors.TargetWithinEyeHeight<>();
+                predicate = castCondition(new TargetInEyeHeight());
                 break;
             case "within_distance":
                 if (!args.contains("min", 6)) {
@@ -619,7 +925,7 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
                     loggerNote.add(new String[] {"within_distance", "max", "double", "0.0"});
                 }
 
-                predicate = new CombatBehaviors.TargetWithinDistance<>(args.getDouble("min"), args.getDouble("max"));
+                predicate = castCondition(new TargetInDistance(args.getDouble("min"), args.getDouble("max")));
                 break;
             case "within_angle":
                 if (!args.contains("min", 6)) {
@@ -630,7 +936,7 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
                     loggerNote.add(new String[] {"within_angle", "max", "double", "0.0F"});
                 }
 
-                predicate = new CombatBehaviors.TargetWithinAngle<>(args.getDouble("min"), args.getDouble("max"));
+                predicate = castCondition(new TargetInPov(args.getDouble("min"), args.getDouble("max")));
                 break;
             case "within_angle_horizontal":
                 if (!args.contains("min", 6)) {
@@ -641,7 +947,7 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
                     loggerNote.add(new String[] {"within_angle_horizontal", "max", "double", "0.0F"});
                 }
 
-                predicate = new CombatBehaviors.TargetWithinAngle.Horizontal<>(args.getDouble("min"), args.getDouble("max"));
+                predicate = castCondition(new TargetInPov.TargetInPovHorizontal(args.getDouble("min"), args.getDouble("max")));
                 break;
             case "health":
                 if (!args.contains("health", 6)) {
@@ -652,7 +958,7 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
                     loggerNote.add(new String[] {"health", "comparator", "string", ""});
                 }
 
-                predicate = new CombatBehaviors.Health<>((float) args.getDouble("health"), CombatBehaviors.Health.Comparator.valueOf(args.getString("comparator").toUpperCase(Locale.ROOT)));
+                predicate = castCondition(new HealthPoint((float) args.getDouble("health"), HealthPoint.Comparator.valueOf(args.getString("comparator").toUpperCase(Locale.ROOT))));
                 break;
 
             case "guard_break":
@@ -687,7 +993,7 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
                 if (!args.contains("comparator", 8)) {
                     loggerNote.add(new String[] {"stamina", "comparator", "string", ""});
                 }
-                predicate = new ExtraPredicate.SelfStamina<>((float) args.getDouble("stamina"), CombatBehaviors.Health.Comparator.valueOf(args.getString("comparator").toUpperCase(Locale.ROOT)));
+                predicate = new ExtraPredicate.SelfStamina<>((float) args.getDouble("stamina"), HealthPoint.Comparator.valueOf(args.getString("comparator").toUpperCase(Locale.ROOT)));
                 break;
 
             case "using_item":
@@ -695,6 +1001,75 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
                     loggerNote.add(new String[] {"using_item", "edible", "boolean", ""});
                 }
                 predicate = new ExtraPredicate.TargetIsUsingItem<>(args.getBoolean("edible"));
+                break;
+
+            case "mainhand_weapon_category":
+                if (!args.contains("category", 8)) {
+                    loggerNote.add(new String[] {"mainhand_weapon_category", "category", "string", ""});
+                }
+                predicate = new ExtraPredicate.MainhandWeaponCategory<>(args.getString("category"));
+                break;
+
+            case "offhand_weapon_category":
+                if (!args.contains("category", 8)) {
+                    loggerNote.add(new String[] {"offhand_weapon_category", "category", "string", ""});
+                }
+                predicate = new ExtraPredicate.OffhandWeaponCategory<>(args.getString("category"));
+                break;
+
+            case "has_gear_in_inventory":
+                if (!args.contains("item", 8)) {
+                    loggerNote.add(new String[] {"has_gear_in_inventory", "item", "string", ""});
+                }
+                predicate = new ExtraPredicate.HasGearInInventory<>(
+                        ResourceLocation.parse(args.getString("item")),
+                        args.contains("slot", 8) ? parseEquipmentSlot(args.getString("slot")) : null,
+                        args.contains("include_equipped") && args.getBoolean("include_equipped")
+                );
+                break;
+
+            case "has_ammo":
+                predicate = new ExtraPredicate.HasAmmo<>(
+                        args.contains("hand", 8) ? parseInteractionHand(args.getString("hand")) : InteractionHand.MAIN_HAND,
+                        args.contains("invert") && args.getBoolean("invert")
+                );
+                break;
+
+            case "ammo_is_empty":
+                predicate = new ExtraPredicate.AmmoIsEmpty<>(
+                        args.contains("hand", 8) ? parseInteractionHand(args.getString("hand")) : null,
+                        args.contains("invert") && args.getBoolean("invert")
+                );
+                break;
+
+            case "ammo_not_full":
+                predicate = new ExtraPredicate.AmmoNotFull<>(
+                        args.contains("hand", 8) ? parseInteractionHand(args.getString("hand")) : null,
+                        args.contains("invert") && args.getBoolean("invert")
+                );
+                break;
+
+            case "ammo_has_reserve":
+                predicate = new ExtraPredicate.AmmoHasReserve<>(
+                        args.contains("hand", 8) ? parseInteractionHand(args.getString("hand")) : null,
+                        args.contains("invert") && args.getBoolean("invert")
+                );
+                break;
+
+            case "target_blocking":
+                predicate = new ExtraPredicate.TargetBlocking<>(args.contains("invert") && args.getBoolean("invert"));
+                break;
+
+            case "target_using_shield":
+                predicate = new ExtraPredicate.TargetUsingShield<>(args.contains("invert") && args.getBoolean("invert"));
+                break;
+
+            case "no_target":
+                predicate = new ExtraPredicate.NoTarget<>();
+                break;
+
+            case "has_target":
+                predicate = new ExtraPredicate.HasTarget<>();
                 break;
 
             case "phase":
@@ -717,5 +1092,96 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
         }
 
         return predicate;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T extends MobPatch<?>> Condition<T> castCondition(Condition<?> condition) {
+        return (Condition<T>) condition;
+    }
+
+    private static EquipmentSlot parseEquipmentSlot(String slotName) {
+        return switch (slotName.toLowerCase(Locale.ROOT)) {
+            case "mainhand", "main_hand" -> EquipmentSlot.MAINHAND;
+            case "offhand", "off_hand" -> EquipmentSlot.OFFHAND;
+            case "head", "helmet" -> EquipmentSlot.HEAD;
+            case "chest", "chestplate" -> EquipmentSlot.CHEST;
+            case "legs", "leggings" -> EquipmentSlot.LEGS;
+            case "feet", "boots" -> EquipmentSlot.FEET;
+            default -> throw new IllegalArgumentException("[Custom Entity Error] No equipment slot named: " + slotName);
+        };
+    }
+
+    private static InteractionHand parseInteractionHand(String handName) {
+        return switch (handName.toLowerCase(Locale.ROOT)) {
+            case "mainhand", "main_hand" -> InteractionHand.MAIN_HAND;
+            case "offhand", "off_hand" -> InteractionHand.OFF_HAND;
+            default -> throw new IllegalArgumentException("[Custom Entity Error] No hand named: " + handName);
+        };
+    }
+
+    private static List<AmmoSlotConfig> deserializeAmmoSlots(ListTag tag) {
+        List<AmmoSlotConfig> ammoSlots = Lists.newArrayList();
+
+        for (int index = 0; index < tag.size(); index++) {
+            CompoundTag ammoSlotTag = tag.getCompound(index);
+            if (!ammoSlotTag.contains("slot", 8)) {
+                loggerNote(Indestructible.LOGGER, "ammo_slots", "slot", "string", "");
+                continue;
+            }
+            if (!ammoSlotTag.contains("rule", 8)) {
+                loggerNote(Indestructible.LOGGER, "ammo_slots", "rule", "string", "supply_or_reload_from");
+                continue;
+            }
+
+            ammoSlots.add(parseAmmoSlotConfig(ammoSlotTag.getString("slot"), ammoSlotTag.getString("rule")));
+        }
+
+        return ammoSlots;
+    }
+
+    private static AmmoSlotConfig parseAmmoSlotConfig(String slotSelector, String ruleName) {
+        AmmoSlotRule rule = parseAmmoSlotRule(ruleName);
+        String normalizedSelector = slotSelector.toLowerCase(Locale.ROOT);
+
+        if ("customnpcs:projectile".equals(normalizedSelector)) {
+            return new AmmoSlotConfig(slotSelector, rule, AmmoSlotType.CUSTOMNPC_PROJECTILE, null, -1);
+        }
+
+        if (normalizedSelector.startsWith("inventory:")) {
+            return new AmmoSlotConfig(slotSelector, rule, AmmoSlotType.INVENTORY, null,
+                    parseAmmoSlotIndex(slotSelector, normalizedSelector, "inventory:"));
+        }
+
+        if (normalizedSelector.startsWith("customnpcs:drop:")) {
+            return new AmmoSlotConfig(slotSelector, rule, AmmoSlotType.CUSTOMNPC_DROP, null,
+                    parseAmmoSlotIndex(slotSelector, normalizedSelector, "customnpcs:drop:"));
+        }
+
+        return new AmmoSlotConfig(slotSelector, rule, AmmoSlotType.EQUIPMENT, parseEquipmentSlot(normalizedSelector), -1);
+    }
+
+    private static AmmoSlotRule parseAmmoSlotRule(String ruleName) {
+        return switch (ruleName.toLowerCase(Locale.ROOT)) {
+            case "supply_or_reload_from" -> AmmoSlotRule.SUPPLY_OR_RELOAD_FROM;
+            default -> throw new IllegalArgumentException("[Custom Entity Error] No ammo slot rule named: " + ruleName);
+        };
+    }
+
+    private static int parseAmmoSlotIndex(String originalSelector, String normalizedSelector, String prefix) {
+        String indexText = normalizedSelector.substring(prefix.length());
+
+        try {
+            int index = Integer.parseInt(indexText);
+            if (index < 0) {
+                throw new IllegalArgumentException("[Custom Entity Error] Ammo slot index must be >= 0: " + originalSelector);
+            }
+            return index;
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException("[Custom Entity Error] Invalid ammo slot selector: " + originalSelector, exception);
+        }
+    }
+
+    private static void loggerNote(org.apache.logging.log4j.Logger logger, String type, String name, String valueType, String defaultValue) {
+        logger.info(String.format("[Custom Entity Error] can't find a proper argument for %s. [name: %s, type: %s, default: %s]", type, name, valueType, defaultValue));
     }
 }

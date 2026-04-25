@@ -1,16 +1,19 @@
 package com.nameless.indestructible.world.ai.task;
 
+import com.google.common.collect.ImmutableMap;
 import com.nameless.indestructible.world.capability.AdvancedCustomHumanoidMobPatch;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
-import net.minecraft.world.entity.ai.behavior.BackUpIfTooClose;
+import net.minecraft.world.entity.ai.behavior.Behavior;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.ai.memory.MemoryStatus;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ProjectileWeaponItem;
 import yesman.epicfight.world.capabilities.EpicFightCapabilities;
 import yesman.epicfight.world.capabilities.entitypatch.LivingEntityPatch;
 
-public class GuardBehavior<E extends Mob> extends BackUpIfTooClose<E> {
+public class GuardBehavior<E extends Mob> extends Behavior<E> {
 
 
 	private final AdvancedCustomHumanoidMobPatch<?> mobpatch;
@@ -18,7 +21,7 @@ public class GuardBehavior<E extends Mob> extends BackUpIfTooClose<E> {
 	private int targetInactiontime = -1;
 
 	public GuardBehavior(AdvancedCustomHumanoidMobPatch<?> customHumanoidMobPatch, float radius) {
-		super(1, 1);
+		super(ImmutableMap.of(MemoryModuleType.ATTACK_TARGET, MemoryStatus.VALUE_PRESENT));
 		this.mobpatch = customHumanoidMobPatch;
 		this.radiusSqr = radius  * radius;
 	}
@@ -40,7 +43,7 @@ public class GuardBehavior<E extends Mob> extends BackUpIfTooClose<E> {
 		this.targetInactiontime = -1;
 		this.mobpatch.setParryCounter(0);
 		mobpatch.setBlocking(false);
-		mobpatch.getAnimator().resetLivingAnimations();
+		mobpatch.modifyLivingMotionByCurrentItem(false);
 	}
 
 	private boolean checkTargetValid() {
@@ -72,13 +75,16 @@ public class GuardBehavior<E extends Mob> extends BackUpIfTooClose<E> {
 	public void tick(ServerLevel level, E mob, long p_22553_) {
 		LivingEntity target = this.mobpatch.getTarget();
 		if (target != null) {
+			mob.lookAt(target, 30.0F, 30.0F);
 			LivingEntityPatch<?> targetPatch = EpicFightCapabilities.getEntityPatch(target, LivingEntityPatch.class);
 			if (targetPatch != null){
 				int phase = targetPatch.getEntityState().getLevel();
 				if(this.withinDistance() && phase > 0 && phase < 3) {
 					this.targetInactiontime = 0;
+					mob.getMoveControl().strafe(-0.5F, 0.0F);
 				} else if (this.mobpatch.canBlockProjectile() && target.getUseItem().getItem() instanceof ProjectileWeaponItem && target.isUsingItem()) {
 					this.targetInactiontime = 0;
+					mob.getMoveControl().strafe(-0.5F, 0.0F);
 				} else {
 					++this.targetInactiontime;
 				}

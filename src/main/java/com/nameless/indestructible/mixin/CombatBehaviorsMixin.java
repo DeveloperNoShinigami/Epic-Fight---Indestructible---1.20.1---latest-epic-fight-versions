@@ -13,6 +13,9 @@ public interface CombatBehaviorsMixin<T extends MobPatch<?>> {
     @Accessor(value = "currentBehaviorPointer", remap = false)
     int getCurrentBehaviorPointer();
 
+    @Accessor(value = "currentBehaviorPointer", remap = false)
+    void setCurrentBehaviorPointer(int currentBehaviorPointer);
+
     @Accessor(value = "behaviorSeriesList", remap = false)
     List<CombatBehaviors.BehaviorSeries<T>> getBehaviorSeriesList();
 }
