@@ -1,0 +1,113 @@
+// EFI-unofficial tutorial: CORE / BASELINE
+// Minecraft 1.20.1 | Forge 47.4.0
+//
+// This file focuses on the original/baseline behavior surface.
+// It intentionally avoids extension-heavy setup.
+//
+// Registration (core path):
+// - data/<namespace>/advanced_mobpatch/<entity_registry_path>.json
+// - Filename must match entity registry path exactly.
+// - Example for customnpcs:customnpc:
+//   data/mypack/advanced_mobpatch/customnpcs/customnpc.json
+
+{
+  "model": "epicfight:entity/skeleton",
+  "armature": "epicfight:entity/skeleton",
+  "renderer": "skeleton",
+  "faction": "undead",
+
+  "attributes": {
+    "weight": 40,
+    "impact": 0.5,
+    "armor_negation": 0.0,
+    "max_stamina": 15.0,
+    "stamina_regan_multiply": 1.0,
+    "stamina_regan_delay": 30,
+    "max_strikes": 1,
+    "attack_radius": 1.5,
+    "guard_radius": 3.0
+  },
+
+  "default_livingmotions": {
+    "idle": "epicfight:biped/living/idle",
+    "walk": "epicfight:biped/living/walk",
+    "chase": "epicfight:biped/living/walk",
+    "death": "epicfight:biped/living/death"
+  },
+
+  "combat_behavior": [
+    {
+      "weapon_categories": ["sword"],
+      "style": "common",
+      "behavior_series": [
+        {
+          "weight": 1.0,
+          "cooldown": 0,
+          "canBeInterrupted": true,
+          "looping": false,
+          "behaviors": [
+            {
+              "conditions": [
+                {"predicate": "within_eye_height"},
+                {"predicate": "within_distance", "min": 0.0, "max": 5.0}
+              ],
+              "animation": "epicfight:biped/combat/axe_auto1",
+              "play_speed": 1.0,
+              "stamina": 0.0,
+              "end_by_hurt_level": 2
+            },
+            {
+              "conditions": [
+                {"predicate": "within_distance", "min": 2.0, "max": 5.0}
+              ],
+              "guard": 30,
+              "parry": false,
+              "end_by_hurt_level": 2
+            },
+            {
+              "conditions": [
+                {"predicate": "within_distance", "min": 0.0, "max": 8.0}
+              ],
+              "wander": 20,
+              "inaction_time": 20,
+              "x_axis": 0.5,
+              "z_axis": 0.0,
+              "end_by_hurt_level": 2
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+
+// --------------------------------------------------------------------------
+// Core behavior keys:
+// - animation
+// - guard
+// - wander
+//
+// Core shared behavior fields:
+// - conditions
+// - set_phase
+// - end_by_hurt_level
+//
+// Core/base predicates commonly used:
+// - random_chance: passes by probability chance (0..1)
+// - within_eye_height: target is near same eye-height band
+// - within_distance: target distance is between min and max
+// - within_angle: target is inside facing-angle range
+// - within_angle_horizontal: horizontal-only angle check
+// - health: self health check by absolute or ratio comparator
+// - guard_break: target is in guard-break state
+// - knock_down: target is downed state
+// - attack_level: target hurt/stun level is within min/max
+// - stamina: self stamina check by absolute or ratio comparator
+// - using_item: target currently using item (optionally edible-only)
+// - phase: current phase integer is within min/max
+//
+// Comparator values used by health/stamina checks:
+// - LESS_ABSOLUTE
+// - GREATER_ABSOLUTE
+// - LESS_RATIO
+// - GREATER_RATIO

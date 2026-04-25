@@ -1,0 +1,150 @@
+// EFI-unofficial tutorial: EXTENSIONS
+// Minecraft 1.20.1 | Forge 47.4.0
+//
+// This file covers features added on top of the core/base behavior surface:
+// - nbt_tag registration path
+// - TACZ helpers
+// - ammo_slots routing for mobs + CustomNPCs
+// - gear_swap
+// - extension predicates/behaviors
+//
+// --------------------------------------------------------------------------
+// Registration path A (core): entity-keyed filename
+// - data/<namespace>/advanced_mobpatch/<entity_registry_path>.json
+//
+// Registration path B (extension): nbt_tag-driven
+// - filename can be arbitrary
+// - add required root field: "nbt_tag": "{...SNBT...}"
+// - patch applies when runtime entity NBT matches
+//
+// Example nbt_tag values:
+// "nbt_tag": "{my_boss_marker:1b}"
+// "nbt_tag": "{CustomName:'{\"text\":\"Super Creeper\"}'}"
+
+{
+  "nbt_tag": "{my_boss_marker:1b}",
+
+  "model": "epicfight:entity/skeleton",
+  "armature": "epicfight:entity/skeleton",
+  "renderer": "skeleton",
+  "faction": "undead",
+
+  "attributes": {
+    "weight": 40,
+    "impact": 1.0,
+    "armor_negation": 0.0,
+    "max_stamina": 15.0,
+    "stamina_regan_multiply": 1.0,
+    "stamina_regan_delay": 30,
+    "attack_radius": 1.5,
+    "guard_radius": 3.0
+  },
+
+  "humanoid_weapon_motions": [
+    {
+      "weapon_categories": ["ranged"],
+      "style": "common",
+      "livingmotions": {
+        "idle": "epicfight:biped/living/hold_crossbow",
+        "chase": "epicfight:biped/living/hold_crossbow",
+        "walk": "epicfight:biped/living/walk"
+      }
+    }
+  ],
+
+  // Works for both normal mobs and CustomNPCs.
+  // Slot order is priority order.
+  "ammo_slots": [
+    {"slot": "customnpcs:projectile", "rule": "supply_or_reload_from"},
+    {"slot": "customnpcs:drop:0", "rule": "supply_or_reload_from"},
+    {"slot": "inventory:0", "rule": "supply_or_reload_from"},
+    {"slot": "offhand", "rule": "supply_or_reload_from"}
+  ],
+
+  "combat_behavior": [
+    {
+      // Recommended TACZ pattern: ranged + common
+      "weapon_categories": ["ranged"],
+      "style": "common",
+      "behavior_series": [
+        {
+          "weight": 1.0,
+          "looping": true,
+          "canBeInterrupted": true,
+          "behaviors": [
+            {
+              "conditions": [
+                {"predicate": "has_target"},
+                {"predicate": "within_distance", "min": 6.0, "max": 28.0}
+              ],
+              "tacz_aim": {"inaction_time": 2},
+              "end_by_hurt_level": 2
+            },
+            {
+              "conditions": [
+                {"predicate": "within_distance", "min": 6.0, "max": 28.0}
+              ],
+              "tacz_shoot": {"fire_mode": "AUTO"},
+              "end_by_hurt_level": 2
+            },
+            {
+              "conditions": [
+                {"predicate": "ammo_is_empty"}
+              ],
+              "reload": 20,
+              "require_ammo": false,
+              "end_by_hurt_level": 2
+            },
+            {
+              "conditions": [
+                {"predicate": "has_gear_in_inventory", "item": "minecraft:shield", "include_equipped": false}
+              ],
+              "gear_swap": {
+                "item": "minecraft:shield",
+                "allow_equipped": true,
+                "store_gear": true,
+                "inaction_time": 10
+              },
+              "end_by_hurt_level": 2
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+
+// --------------------------------------------------------------------------
+// Extension behavior keys:
+// - gear_swap
+// - reload
+// - tacz_aim
+// - tacz_shoot
+//
+// Extension predicates commonly used:
+// - mainhand_weapon_category: main hand weapon category equals value
+// - offhand_weapon_category: off hand weapon category equals value
+// - has_gear_in_inventory: item exists in inventory/equipment scope
+// - has_ammo: active gun currently has loaded ammo
+// - ammo_is_empty: active gun magazine is empty
+// - ammo_not_full: active gun can still accept more rounds
+// - ammo_has_reserve: compatible reserve ammo exists in ammo_slots
+// - target_blocking: target is actively blocking
+// - target_using_shield: target currently has shield-use state
+// - no_target: no valid current target
+// - has_target: valid current target exists
+//
+// ammo_slots selectors:
+// - customnpcs:projectile
+// - customnpcs:drop:<index>
+// - inventory:<index>
+// - mainhand, offhand, head, chest, legs, feet
+//
+// require_ammo behavior:
+// - true  = consume reserve ammo from declared ammo_slots
+// - false = direct-fill reload (infinite-ammo style)
+//
+// Reminder:
+// - TACZ is optional and additive.
+// - nbt_tag path is optional and additive.
+// - Core/base Epic Fight flow still works without these extensions.

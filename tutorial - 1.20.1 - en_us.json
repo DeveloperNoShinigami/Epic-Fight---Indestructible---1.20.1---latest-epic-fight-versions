@@ -1,0 +1,20 @@
+// EFI-unofficial tutorial index (split format)
+// Minecraft 1.20.1 | Forge 47.4.0
+//
+// This file is a quick map. The actual tutorials are split into:
+//
+// 1) Core / baseline behavior tutorial:
+//    tutorial - core - 1.20.1 - en_us.json
+//
+// 2) Extension features tutorial:
+//    tutorial - extensions - 1.20.1 - en_us.json
+//
+// Why split?
+// - Core file explains the original/base behavior surface and base predicates.
+// - Extensions file explains what EFI adds on top (NBT tag path, TACZ helpers,
+//   ammo routing, gear swap, and extension predicates/behaviors).
+//
+// Notes:
+// - TACZ is an optional extension, not the centerpiece.
+// - nbt_tag is also an extension path, alternative to registry-path-keyed files.
+// - Base Epic Fight datapack logic remains valid and supported.
