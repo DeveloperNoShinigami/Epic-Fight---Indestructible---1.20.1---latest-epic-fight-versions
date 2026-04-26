@@ -29,11 +29,14 @@
 
 EFI-Unofficial (Epic Fight Indestructible – Unofficial) extends the upstream
 EFI mod with additional combat AI features, TACZ gun integration, CustomNPCs
-inventory support, and a richer datapack condition/predicate system.
+support, and a richer datapack condition/predicate system.
 
 The mod reads JSON datapacks from `data/<namespace>/advanced_mobpatch/` and
 applies an `AdvancedCustomHumanoidMobPatch` to any registered EntityType,
 layering combat behaviors on top of standard EpicFight AI.
+
+This means you can keep base EpicFight behavior and add your own TACZ-style
+combat flow (aim, shoot, reload, weapon swap, phase logic) through datapacks.
 
 ---
 
@@ -109,8 +112,13 @@ All attributes live inside the top-level `"attributes": {}` object.
 
 ## Ammo Slots
 
-Defines where the NPC draws ammo from when using a TACZ gun. Omit entirely if
-using `require_ammo: false` (infinite ammo mode).
+Defines where the entity draws ammo from when using a TACZ gun.
+
+`ammo_slots` works for both regular mobs and CustomNPCs. CustomNPCs are still
+entity types in the same patch pipeline, so they follow the same field and
+behavior rules.
+
+Omit entirely if using `require_ammo: false` (infinite ammo mode).
 
 ```json
 "ammo_slots": [
@@ -482,6 +490,21 @@ The entire TACZ API is accessed through reflection so the mod does not require
 TACZ as a compile-time dependency. All TACZ features degrade gracefully to
 no-ops if TACZ is absent.
 
+### Current Datapack Setup (TACZ-style NPCs)
+
+For TACZ-style combat entities, the recommended behavior flow is:
+
+1. `tacz_aim`
+2. `tacz_shoot`
+3. `reload` (or `require_ammo: false` for infinite-ammo NPCs)
+4. Optional `gear_swap` / phase transition / movement behavior
+
+This setup works for both standard mobs and CustomNPCs.
+
+Use `ammo_slots` when you want reserve-ammo behavior from inventory/equipment,
+or set `require_ammo: false` when you want scripted enemies to always reload
+without consuming items.
+
 ### How Shooting Works (per tick)
 
 1. **Combat goal fires** `tryTaczShoot()` when the behavior predicate passes.
@@ -574,36 +597,29 @@ datapack entry.
 
 ## Known Gotchas
 
-### `playShootingAnimation()` mutates `inactionTime`
+### Datapack path must match entity id
 
-EpicFight's `playShootingAnimation()` internally calls
-`setInactionTime(animationDurationTicks)` (~8–12 ticks). If you call
-`setInactionTime(Math.max(current, shootIntervalTicks))` after it, the
-animation duration wins for fast guns. The fix (applied in this version) is to
-call `setInactionTime(shootIntervalTicks)` unconditionally — the gun RPM governs.
+The file path must match the entity registry key exactly.
+Example: `customnpcs:customnpc` ->
+`data/<namespace>/advanced_mobpatch/customnpcs/customnpc.json`
 
-### `no_target` predicate in behavior series
+### `ammo_slots` order is priority order
 
-EpicFight's `AdvancedCombatGoal` only runs while a target is alive. Behavior
-predicates that check `no_target` will never evaluate to `true` from within a
-behavior series. Use the idle reload in `serverTick` for no-target logic.
+Slots are checked top to bottom. Put your preferred source first.
+Example: keep `customnpcs:projectile` before `inventory:<N>` if projectile ammo
+should be consumed first.
 
-### TACZ rate limiter
+### `require_ammo: false` is infinite-ammo mode
 
-TACZ has an internal server-side rate limiter that silently drops shoot calls
-faster than the gun's rated RPM. The NPC's `inactionTime` is calibrated to
-match this rate, so they should not conflict. If an NPC appears to fire at half
-rate, verify TACZ isn't double-blocking via both its internal limiter and an
-overly long inaction time.
+When `require_ammo` is `false`, reload fills the gun directly and does not
+consume reserve ammo items.
 
-### Ammo slot order matters
+### Use `has_target` / `no_target` intentionally
 
-`ammo_slots` are checked in declaration order. The first slot containing a
-matching ammo item wins for reload. If you want `customnpcs:projectile` to take
-priority over inventory, list it first.
+Target-based predicates are best used for combat-state branching. For simple
+out-of-combat refill behavior, rely on idle reload.
 
-### `require_ammo: false` skips all slot checks
+### Works for mobs and CustomNPCs
 
-With `require_ammo: false`, the mod never reads from `ammo_slots` at all.
-Predicates like `ammo_has_reserve` will still work (they check slots
-independently), but the reload itself is a direct fill.
+Do not split configs by "mob vs CNPC" logic. Use the same behavior model and
+slot system unless you need CustomNPC-specific slot selectors.

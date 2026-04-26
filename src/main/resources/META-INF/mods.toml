@@ -39,20 +39,20 @@ new conditions and behaviors that better enhance your advanced mob combat!
 [[dependencies.indestructible]]
     modId="epicfight"
     mandatory=true
-    versionRange="[20.14.16,)"
-    ordering="BEFORE"
+    versionRange="[20.14.11,)"
+    ordering="AFTER"
     side="BOTH"
 [[dependencies.indestructible]]
     modId="yamatomoveset"
     mandatory=false
     versionRange="[0,)"
-    ordering="BEFORE"
+    ordering="AFTER"
     side="BOTH"
 [[dependencies.indestructible]]
     modId="wom"
     mandatory=false
     versionRange="[0,)"
-    ordering="BEFORE"
+    ordering="AFTER"
     side="BOTH"
 [[dependencies.indestructible]]
     modId="tacz"

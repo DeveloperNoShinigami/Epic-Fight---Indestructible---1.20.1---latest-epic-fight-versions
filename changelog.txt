@@ -1,3 +1,16 @@
+EFI-Unofficial 20.14.18
+=======================
+ - Added CurseForge-ready long and short project descriptions covering original Indestructible features
+   and EFI-Unofficial additions in clearer public-facing wording.
+ - Added a full advanced behavior reference document with datapack-first ordering: top-level behavior
+   series, shared behavior fields, combat behaviors, predicates, accepted slot/hand values, and syntax examples.
+ - Reworked advanced behavior documentation examples to match actual datapack authoring style, including
+   placing conditions at the top of behavior objects.
+ - Expanded WIKI documentation for TACZ-style NPC setup, ammo_slots usage, CustomNPCs support notes,
+   and clearer known-gotcha guidance.
+ - Aligned build dependency and metadata with Epic Fight 20.14.11, including dependency range updates
+   and load-order adjustments in mods.toml.
+
 EFI-Unofficial 20.14.17
 =======================
  - Added gear_swap list syntax: gear_swap now accepts either a single object or an array of entries,
