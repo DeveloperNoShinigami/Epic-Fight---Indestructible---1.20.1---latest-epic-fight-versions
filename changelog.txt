@@ -1,3 +1,17 @@
+EFI-Unofficial 20.14.17
+=======================
+ - Added gear_swap list syntax: gear_swap now accepts either a single object or an array of entries,
+   allowing multiple slots to be swapped atomically in one behavior step.
+ - Fixed gear_swap multi-entry bug where trySwapEquippedGear was stealing freshly-placed items from
+   earlier entries in the same batch, leaving main_hand empty and the NPC in the wrong weapon category.
+ - Added trySwapEquippedGearExcluding helper that respects already-claimed slots within a batch.
+ - Removed separate gear_swap_multi key in favor of unified gear_swap array support.
+ - Fixed ConcurrentModificationException during GoalSelector tick: forceWeaponMotionResync is now
+   deferred via pendingWeaponMotionResync flag and executed safely in serverTick.
+ - Added GearSwapEntry record and tryGearSwapMulti runtime method on AdvancedCustomHumanoidMobPatch.
+ - Fixed gear swap-back to gun never triggering: gun swap-back behavior now lives inside the
+   dagger/two_hand combat_behavior block so it is evaluated while daggers are equipped.
+
 EFI-Unofficial 20.14.16
 =======================
  - Added runtime datapack nbt_tag-driven provider checks for dynamic advanced/base patch transitions.

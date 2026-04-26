@@ -561,21 +561,104 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
                     float forward = behavior.contains("z_axis") ? (float) behavior.getDouble("z_axis") : 0F;
                     float clockwise = behavior.contains("x_axis") ? (float) behavior.getDouble("x_axis") : 0F;
                     behaviorBuilder.behavior(setStrafing(strafingTime, inactionTime, forward, clockwise, phase, hurt_level));
-                } else if (behavior.contains("gear_swap")) {
+                } else if (behavior.contains("gear_swap", 10)) {
                     CompoundTag gearSwap = behavior.getCompound("gear_swap");
-                    if (!gearSwap.contains("item", 8)) {
-                        loggerNote(Indestructible.LOGGER, "gear_swap", "item", "string", "");
+                    String itemKey = null;
+                    ResourceLocation requiredGunId = null;
+                    if (gearSwap.contains("item", 8)) {
+                        itemKey = gearSwap.getString("item");
+                    }
+
+                    if (gearSwap.contains("gun_id", 8)) {
+                        requiredGunId = ResourceLocation.tryParse(gearSwap.getString("gun_id"));
+                        if (requiredGunId == null) {
+                            loggerNote(Indestructible.LOGGER, "gear_swap", "gun_id", "resource_location", "tacz:ak47");
+                            continue;
+                        }
+
+                        // TACZ gun variant id (GunId) is metadata on a TACZ gun item stack.
+                        // If no explicit item is provided, default to the TACZ base gun item.
+                        if (itemKey == null || itemKey.isBlank()) {
+                            itemKey = "tacz:modern_kinetic_gun";
+                        }
+                    }
+
+                    if (itemKey == null || itemKey.isBlank()) {
+                        loggerNote(Indestructible.LOGGER, "gear_swap", "item|gun_id", "string", "");
                     } else {
-                        ResourceLocation itemId = ResourceLocation.parse(gearSwap.getString("item"));
+                        ResourceLocation itemId = ResourceLocation.parse(itemKey);
                         EquipmentSlot slot = gearSwap.contains("slot", 8) ? parseEquipmentSlot(gearSwap.getString("slot")) : null;
                         boolean allowEquipped = !gearSwap.contains("allow_equipped") || gearSwap.getBoolean("allow_equipped");
                         boolean storeOldGear = !gearSwap.contains("store_gear") || gearSwap.getBoolean("store_gear");
+                        boolean requiredInInventory = !gearSwap.contains("required_in_inv") || gearSwap.getBoolean("required_in_inv");
+                        CompoundTag generatedGearTag = null;
+                        if (gearSwap.contains("nbt", 10)) {
+                            generatedGearTag = gearSwap.getCompound("nbt").copy();
+                        } else if (gearSwap.contains("nbt", 8)) {
+                            try {
+                                generatedGearTag = TagParser.parseTag(gearSwap.getString("nbt"));
+                            } catch (CommandSyntaxException e) {
+                                Indestructible.LOGGER.warn("Invalid gear_swap nbt payload: {}", gearSwap.getString("nbt"), e);
+                            }
+                        }
+
+                        // Ensure TACZ GunId is present for generated stacks when gun_id is declared.
+                        if (requiredGunId != null) {
+                            if (generatedGearTag == null) {
+                                generatedGearTag = new CompoundTag();
+                            }
+                            if (!generatedGearTag.contains("GunId", 8)) {
+                                generatedGearTag.putString("GunId", requiredGunId.toString());
+                            }
+                        }
+
                         float stamina = gearSwap.contains("stamina") ? (float) gearSwap.getDouble("stamina") : 0F;
                         int inactionTime = gearSwap.contains("inaction_time") ? gearSwap.getInt("inaction_time") : 0;
                         SoundEvent swapSound = gearSwap.contains("sound", 8)
                                 ? ForgeRegistries.SOUND_EVENTS.getValue(ResourceLocation.parse(gearSwap.getString("sound")))
                                 : null;
-                        behaviorBuilder.behavior(setGearSwap(itemId, slot, allowEquipped, storeOldGear, stamina, inactionTime, swapSound, phase, hurt_level));
+                        behaviorBuilder.behavior(setGearSwap(itemId, slot, allowEquipped, storeOldGear, requiredInInventory, requiredGunId, generatedGearTag, stamina, inactionTime, swapSound, phase, hurt_level));
+                    }
+                } else if (behavior.contains("gear_swap", 9)) {
+                    ListTag swapsTag = behavior.getList("gear_swap", 10);
+                    if (swapsTag.isEmpty()) {
+                        Indestructible.LOGGER.warn("[Advanced Mobpatch] gear_swap list is empty, skipping");
+                    } else {
+                        List<AdvancedCustomHumanoidMobPatch.GearSwapEntry> entries = new java.util.ArrayList<>();
+                        for (int s = 0; s < swapsTag.size(); s++) {
+                            CompoundTag se = swapsTag.getCompound(s);
+                            String seItemKey = null;
+                            ResourceLocation seGunId = null;
+                            if (se.contains("item", 8)) seItemKey = se.getString("item");
+                            if (se.contains("gun_id", 8)) {
+                                seGunId = ResourceLocation.tryParse(se.getString("gun_id"));
+                                if (seGunId != null && (seItemKey == null || seItemKey.isBlank())) seItemKey = "tacz:modern_kinetic_gun";
+                            }
+                            if (seItemKey == null || seItemKey.isBlank()) { continue; }
+                            ResourceLocation seItemId = ResourceLocation.parse(seItemKey);
+                            EquipmentSlot seSlot = se.contains("slot", 8) ? parseEquipmentSlot(se.getString("slot")) : null;
+                            boolean seStore = !se.contains("store_gear") || se.getBoolean("store_gear");
+                            boolean seReqInv = !se.contains("required_in_inv") || se.getBoolean("required_in_inv");
+                            CompoundTag seNbt = null;
+                            if (se.contains("nbt", 10)) {
+                                seNbt = se.getCompound("nbt").copy();
+                            } else if (se.contains("nbt", 8)) {
+                                try { seNbt = TagParser.parseTag(se.getString("nbt")); } catch (CommandSyntaxException e) { Indestructible.LOGGER.warn("Invalid nbt in gear_swap list entry", e); }
+                            }
+                            if (seGunId != null) {
+                                if (seNbt == null) seNbt = new CompoundTag();
+                                if (!seNbt.contains("GunId", 8)) seNbt.putString("GunId", seGunId.toString());
+                            }
+                            entries.add(new AdvancedCustomHumanoidMobPatch.GearSwapEntry(seItemId, seSlot, seStore, seReqInv, seGunId, seNbt));
+                        }
+                        if (!entries.isEmpty()) {
+                            float stamina = behavior.contains("stamina") ? (float) behavior.getDouble("stamina") : 0F;
+                            int inactionTime = behavior.contains("inaction_time") ? behavior.getInt("inaction_time") : 0;
+                            SoundEvent swapSound = behavior.contains("sound", 8)
+                                    ? ForgeRegistries.SOUND_EVENTS.getValue(ResourceLocation.parse(behavior.getString("sound")))
+                                    : null;
+                            behaviorBuilder.behavior(setGearSwapMulti(entries, stamina, inactionTime, swapSound, phase, hurt_level));
+                        }
                     }
                 } else if (behavior.contains("reload")) {
                     int reloadTime = behavior.getInt("reload");
@@ -711,7 +794,9 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
     }
 
     public static <T extends MobPatch<?>> Consumer<T> setGearSwap(ResourceLocation itemId, @Nullable EquipmentSlot slot,
-                                                                   boolean allowEquipped, boolean storeOldGear, float stamina,
+                                                                   boolean allowEquipped, boolean storeOldGear, boolean requiredInInventory,
+                                                                   @Nullable ResourceLocation requiredGunId,
+                                                                   @Nullable CompoundTag generatedGearTag, float stamina,
                                                                    int inactionTime, @Nullable SoundEvent swapSound, int phase, int hurtResist) {
         return (mobpatch) -> {
             if (mobpatch instanceof AdvancedCustomHumanoidMobPatch<?> advancedCustomHumanoidMobPatch) {
@@ -719,7 +804,7 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
                     return;
                 }
 
-                boolean swapped = advancedCustomHumanoidMobPatch.tryGearSwap(itemId, slot, allowEquipped, storeOldGear);
+                boolean swapped = advancedCustomHumanoidMobPatch.tryGearSwap(itemId, slot, allowEquipped, storeOldGear, requiredInInventory, requiredGunId, generatedGearTag);
                 if (!swapped) {
                     return;
                 }
@@ -738,6 +823,26 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
                 if (swapSound != null) {
                     advancedCustomHumanoidMobPatch.playSound(swapSound, 0.0F, 0.0F);
                 }
+            }
+        };
+    }
+
+    public static <T extends MobPatch<?>> Consumer<T> setGearSwapMulti(List<AdvancedCustomHumanoidMobPatch.GearSwapEntry> entries, float stamina, int inactionTime,
+                                                                        @Nullable SoundEvent swapSound, int phase, int hurtResist) {
+        return (mobpatch) -> {
+            if (mobpatch instanceof AdvancedCustomHumanoidMobPatch<?> patch) {
+                if (stamina > 0.0F && patch.getStamina() < stamina) return;
+                boolean anySwapped = patch.tryGearSwapMulti(entries);
+                if (!anySwapped) return;
+                if (stamina > 0.0F) patch.setStamina(patch.getStamina() - stamina);
+                patch.setBlocking(false);
+                patch.setAttackSpeed(1.0F);
+                patch.resetActionTick();
+                patch.resetMotion();
+                patch.setInactionTime(Math.max(patch.getInactionTime(), inactionTime));
+                patch.setHurtResistLevel(hurtResist);
+                if (phase >= 0) patch.setPhase(phase);
+                if (swapSound != null) patch.playSound(swapSound, 0.0F, 0.0F);
             }
         };
     }

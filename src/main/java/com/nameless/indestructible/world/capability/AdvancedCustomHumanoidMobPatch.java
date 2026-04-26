@@ -21,6 +21,7 @@ import com.nameless.indestructible.world.ai.task.AdvancedChasingBehavior;
 import com.nameless.indestructible.world.ai.task.AdvancedCombatBehavior;
 import com.nameless.indestructible.world.ai.task.GuardBehavior;
 import io.netty.buffer.ByteBuf;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.tags.DamageTypeTags;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.syncher.EntityDataAccessor;
@@ -167,6 +168,7 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
     private WeaponCategory lastOffHandCategory;
     private Style lastOffHandStyle;
     private boolean lastBlockingState;
+    private boolean pendingWeaponMotionResync;
     private double cNPC_EpicFight_Addon$activeTaczCombatRange = -1.0D;
     private static final float BASELINE_STEP_HEIGHT = 1.0F;
     private static final int STEP_ASSIST_COOLDOWN_TICKS = 8;
@@ -281,6 +283,11 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
             this.original.setMaxUpStep(BASELINE_STEP_HEIGHT);
         }
         this.tickUniversalStepAssist();
+
+        if (this.pendingWeaponMotionResync) {
+            this.pendingWeaponMotionResync = false;
+            this.forceWeaponMotionResync();
+        }
 
         this.syncWeaponLivingMotionsIfNeeded();
 
@@ -551,7 +558,8 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
 
     public void refreshCombatStateAfterGearChange() {
         this.clearTaczSustainedFire();
-        this.forceWeaponMotionResync();
+        // Delay AI/goal refresh to serverTick to avoid mutating GoalSelector during iteration.
+        this.pendingWeaponMotionResync = true;
     }
 
     public boolean hasGearInInventory(ResourceLocation itemId, @Nullable EquipmentSlot targetSlot, boolean includeEquipped) {
@@ -568,7 +576,7 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
             SimpleContainer inventory = inventoryCarrier.getInventory();
 
             for (int index = 0; index < inventory.getContainerSize(); index++) {
-                if (this.isMatchingGear(inventory.getItem(index), item, targetSlot)) {
+                if (this.isMatchingGear(inventory.getItem(index), item, targetSlot, null)) {
                     return true;
                 }
             }
@@ -897,28 +905,79 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
         this.taczSustainFireMode = null;
     }
 
-    public boolean tryGearSwap(ResourceLocation itemId, @Nullable EquipmentSlot targetSlot, boolean allowEquipped, boolean storeOldGear) {
+    public boolean tryGearSwap(ResourceLocation itemId, @Nullable EquipmentSlot targetSlot, boolean allowEquipped, boolean storeOldGear,
+                               boolean requiredInInventory, @Nullable ResourceLocation requiredGunId,
+                               @Nullable CompoundTag generatedGearTag) {
         Item item = ForgeRegistries.ITEMS.getValue(itemId);
         if (item == null) {
             return false;
         }
 
+        ItemStack generatedTemplate = new ItemStack(item);
+        if (generatedGearTag != null) {
+            generatedTemplate.setTag(generatedGearTag.copy());
+        }
+
         for (EquipmentSlot candidateSlot : this.resolveGearSwapTargets(item, targetSlot)) {
             ItemStack currentTargetGear = this.original.getItemBySlot(candidateSlot);
-            if (this.isMatchingGear(currentTargetGear, item, candidateSlot)) {
+            if (this.isMatchingGear(currentTargetGear, item, candidateSlot, requiredGunId)) {
                 continue;
             }
 
-            if (allowEquipped && this.trySwapEquippedGear(item, candidateSlot, storeOldGear)) {
+            if (allowEquipped && this.trySwapEquippedGear(item, candidateSlot, storeOldGear, requiredGunId)) {
                 return true;
             }
 
-            if (this.trySwapInventoryGear(item, candidateSlot, storeOldGear)) {
+            if (this.trySwapInventoryGear(item, candidateSlot, storeOldGear, requiredGunId)) {
+                return true;
+            }
+
+            if (!requiredInInventory && this.tryPlaceGeneratedGear(generatedTemplate, candidateSlot, storeOldGear)) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    /** Attempts every swap in the list. Returns true if at least one succeeded.
+     *  A single {@link #refreshCombatStateAfterGearChange()} call happens for the whole batch,
+     *  but only when at least one swap actually changed the equipment. */
+    public boolean tryGearSwapMulti(List<GearSwapEntry> entries) {
+        boolean anySwapped = false;
+        // Track slots filled during this batch so earlier placements are not stolen by later entries.
+        java.util.Set<EquipmentSlot> filledThisPass = new java.util.HashSet<>();
+        for (GearSwapEntry e : entries) {
+            Item item = ForgeRegistries.ITEMS.getValue(e.itemId());
+            if (item == null) continue;
+            ItemStack template = new ItemStack(item);
+            if (e.nbt() != null) template.setTag(e.nbt().copy());
+            boolean entrySwapped = false;
+            for (EquipmentSlot candidateSlot : this.resolveGearSwapTargets(item, e.slot())) {
+                // If this slot was already filled in this batch, it counts as done.
+                if (filledThisPass.contains(candidateSlot)) { entrySwapped = true; break; }
+                if (this.isMatchingGear(this.original.getItemBySlot(candidateSlot), item, candidateSlot, e.gunId())) {
+                    filledThisPass.add(candidateSlot);
+                    entrySwapped = true;
+                    break;
+                }
+                boolean swapped;
+                if (!e.requiredInInventory()) {
+                    // When generating gear, place directly — never steal from other slots (that would
+                    // undo a previous entry's placement within the same batch).
+                    swapped = this.tryPlaceGeneratedGear(template, candidateSlot, e.storeGear())
+                            || this.trySwapInventoryGear(item, candidateSlot, e.storeGear(), e.gunId());
+                } else {
+                    // Inventory-required path: search equipped slots, but skip any already filled this pass.
+                    swapped = this.trySwapEquippedGearExcluding(item, candidateSlot, e.storeGear(), e.gunId(), filledThisPass)
+                            || this.trySwapInventoryGear(item, candidateSlot, e.storeGear(), e.gunId());
+                }
+                if (swapped) { anySwapped = true; entrySwapped = true; filledThisPass.add(candidateSlot); break; }
+            }
+            if (entrySwapped) anySwapped = true;
+        }
+        if (anySwapped) this.refreshCombatStateAfterGearChange();
+        return anySwapped;
     }
 
     @Nullable
@@ -995,7 +1054,7 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
 
     private boolean hasMatchingEquippedGear(Item item, @Nullable EquipmentSlot targetSlot) {
         for (EquipmentSlot equipmentSlot : EquipmentSlot.values()) {
-            if (this.isMatchingGear(this.original.getItemBySlot(equipmentSlot), item, targetSlot)) {
+            if (this.isMatchingGear(this.original.getItemBySlot(equipmentSlot), item, targetSlot, null)) {
                 return true;
             }
         }
@@ -1003,14 +1062,35 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
         return false;
     }
 
-    private boolean trySwapEquippedGear(Item item, EquipmentSlot targetSlot, boolean storeOldGear) {
+    private boolean trySwapEquippedGearExcluding(Item item, EquipmentSlot targetSlot, boolean storeOldGear,
+                                                  @Nullable ResourceLocation requiredGunId,
+                                                  java.util.Set<EquipmentSlot> excludedSources) {
+        for (EquipmentSlot sourceSlot : EquipmentSlot.values()) {
+            if (sourceSlot == targetSlot || excludedSources.contains(sourceSlot)) continue;
+            ItemStack sourceStack = this.original.getItemBySlot(sourceSlot);
+            if (!this.isMatchingGear(sourceStack, item, targetSlot, requiredGunId)) continue;
+            ItemStack targetStack = this.original.getItemBySlot(targetSlot).copy();
+            ItemStack movedStack = sourceStack.copy();
+            this.original.setItemSlot(targetSlot, movedStack);
+            if (storeOldGear && !targetStack.isEmpty()) {
+                this.original.setItemSlot(sourceSlot, targetStack);
+            } else {
+                this.original.setItemSlot(sourceSlot, ItemStack.EMPTY);
+            }
+            this.refreshCombatStateAfterGearChange();
+            return true;
+        }
+        return false;
+    }
+
+    private boolean trySwapEquippedGear(Item item, EquipmentSlot targetSlot, boolean storeOldGear, @Nullable ResourceLocation requiredGunId) {
         for (EquipmentSlot sourceSlot : EquipmentSlot.values()) {
             if (sourceSlot == targetSlot) {
                 continue;
             }
 
             ItemStack sourceStack = this.original.getItemBySlot(sourceSlot);
-            if (!this.isMatchingGear(sourceStack, item, targetSlot)) {
+            if (!this.isMatchingGear(sourceStack, item, targetSlot, requiredGunId)) {
                 continue;
             }
 
@@ -1031,7 +1111,7 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
         return false;
     }
 
-    private boolean trySwapInventoryGear(Item item, EquipmentSlot targetSlot, boolean storeOldGear) {
+    private boolean trySwapInventoryGear(Item item, EquipmentSlot targetSlot, boolean storeOldGear, @Nullable ResourceLocation requiredGunId) {
         if (!(this.original instanceof InventoryCarrier inventoryCarrier)) {
             return false;
         }
@@ -1039,7 +1119,7 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
         SimpleContainer inventory = inventoryCarrier.getInventory();
         for (int index = 0; index < inventory.getContainerSize(); index++) {
             ItemStack sourceStack = inventory.getItem(index);
-            if (!this.isMatchingGear(sourceStack, item, targetSlot)) {
+            if (!this.isMatchingGear(sourceStack, item, targetSlot, requiredGunId)) {
                 continue;
             }
 
@@ -1061,6 +1141,24 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
         return false;
     }
 
+    private boolean tryPlaceGeneratedGear(ItemStack template, EquipmentSlot targetSlot, boolean storeOldGear) {
+        if (template.isEmpty() || !this.isGearCompatibleWithSlot(template, targetSlot)) {
+            return false;
+        }
+
+        ItemStack targetStack = this.original.getItemBySlot(targetSlot).copy();
+        ItemStack movedStack = template.copy();
+        movedStack.setCount(1);
+        this.original.setItemSlot(targetSlot, movedStack);
+
+        if (storeOldGear && !targetStack.isEmpty()) {
+            this.placeGearInInventoryOrDrop(targetStack);
+        }
+
+        this.refreshCombatStateAfterGearChange();
+        return true;
+    }
+
     private void placeGearInInventoryOrDrop(ItemStack stack) {
         if (stack.isEmpty()) {
             return;
@@ -1079,8 +1177,17 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
         this.original.spawnAtLocation(stack.copy());
     }
 
-    private boolean isMatchingGear(ItemStack stack, Item item, @Nullable EquipmentSlot targetSlot) {
-        return !stack.isEmpty() && stack.is(item) && this.isGearCompatibleWithSlot(stack, targetSlot);
+    private boolean isMatchingGear(ItemStack stack, Item item, @Nullable EquipmentSlot targetSlot, @Nullable ResourceLocation requiredGunId) {
+        if (stack.isEmpty() || !stack.is(item) || !this.isGearCompatibleWithSlot(stack, targetSlot)) {
+            return false;
+        }
+
+        if (requiredGunId == null) {
+            return true;
+        }
+
+        CompoundTag tag = stack.getTag();
+        return tag != null && requiredGunId.toString().equals(tag.getString("GunId"));
     }
 
     private boolean isGearCompatibleWithSlot(ItemStack stack, @Nullable EquipmentSlot targetSlot) {
@@ -1780,6 +1887,14 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
     public record CounterMotion(AnimationAccessor<? extends StaticAnimation> counter, float cost, float chance, float speed) {}
     public record DamageSourceModifier(float damage, float impact, float armor_negation, @Nullable StunType stunType, @Nullable
                                        Collider collider){ }
+    /** One entry in a list-style {@code gear_swap} action. */
+    public record GearSwapEntry(
+            ResourceLocation itemId,
+            @Nullable EquipmentSlot slot,
+            boolean storeGear,
+            boolean requiredInInventory,
+            @Nullable ResourceLocation gunId,
+            @Nullable CompoundTag nbt) { }
 
     public static class GuardMotion{
         private final AnimationAccessor<? extends StaticAnimation> guardAnimation;
