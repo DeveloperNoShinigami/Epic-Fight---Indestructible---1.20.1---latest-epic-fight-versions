@@ -21,7 +21,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.function.Supplier;
 
-final class TaczCompat {
+public final class TaczCompat {
     private static final String TACZ_MOD_ID = "tacz";
 
     private static final Class<?> I_GUN_CLASS;
@@ -544,7 +544,7 @@ final class TaczCompat {
         }
     }
 
-    static boolean isAiming(LivingEntity shooter) {
+    public static boolean isAiming(LivingEntity shooter) {
         return BACKEND.isAiming(shooter);
     }
 

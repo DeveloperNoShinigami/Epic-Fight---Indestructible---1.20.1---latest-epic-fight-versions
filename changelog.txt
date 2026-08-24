@@ -1,3 +1,22 @@
+EFI-Unofficial 20.14.17 — public compatibility build (2026-08-23)
+===============================================================
+ - Universal runtime nbt_tag selection works for generic mobs and CustomNPCs;
+   one matching patch may be shared by any number of entities.
+ - Equipment, armature, native held-item motions, and client animation state
+   remain synchronized after combat, reloads, swaps, and world reloads.
+ - TACZ aim is sustained through shooting, reload works with or without a
+   target, and gun cadence follows current TACZ data.
+ - NPC-to-NPC Epic Fight damage reaches the stun pipeline.
+ - Mob patch refreshes no longer mutate AI goals during iteration.
+
+EFI-Unofficial 20.14.19
+=======================
+ - [TEMP FIX] Added null guard in AttackAnimationMixin.spawnHitParticle to prevent server crashes
+   when an attack animation (e.g. AirSlashAnimation used by CustomNPCs) has no hit particle registered.
+   Previously this caused a NullPointerException that crashed the server on entity tick.
+   This silently skips the particle spawn instead of crashing. Should be removed once Epic Fight
+   guards this internally or the animation registration is fixed upstream.
+
 EFI-Unofficial 20.14.18
 =======================
  - Added CurseForge-ready long and short project descriptions covering original Indestructible features

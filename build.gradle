@@ -20,7 +20,7 @@ apply plugin: 'org.spongepowered.mixin'
 
 
 
-version = '20.14.16'
+version = '20.14.17'
 group = 'com.efi.unofficial' // http://maven.apache.org/guides/mini/guide-naming-conventions.html
 archivesBaseName = 'EFI-Unofficial'
 
@@ -117,10 +117,11 @@ mixin {
 
 dependencies {
     minecraft 'net.minecraftforge:forge:1.20.1-47.4.0'
-    implementation fg.deobf("curse.maven:epic-fight-mod-405076:7734075") // Epic Fight Mod 20.14.11
-    //implementation fg.deobf("curse.maven:epic-fight-mod-405076:7919289")
+    // Epic Fight 20.14.17 for 1.20.1 (CurseForge file 8049910)
+    implementation fg.deobf("curse.maven:epic-fight-mod-405076:8049910")
     compileOnly fg.deobf("curse.maven:timeless-and-classics-zero-1028108:7745481")
-    compileOnly fg.deobf("curse.maven:customnpcs-unofficial-1052708:7694841")
+    // CustomNPCs-Unofficial 1.20.1.20260711 (CurseForge file 8414335)
+    compileOnly fg.deobf("curse.maven:customnpcs-unofficial-1052708:8414335")
     annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
 }
 

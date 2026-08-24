@@ -1,6 +1,6 @@
 # EFI-Unofficial — Developer Wiki
 
-**Version:** 20.14.16-unofficial  
+**Version:** 20.14.17-unofficial  
 **Platform:** Minecraft 1.20.1 · Forge 47.4.0  
 **Dependencies:** EpicFight · TACZ (optional) · CustomNPCs (optional)
 
@@ -37,6 +37,11 @@ layering combat behaviors on top of standard EpicFight AI.
 
 This means you can keep base EpicFight behavior and add your own TACZ-style
 combat flow (aim, shoot, reload, weapon swap, phase logic) through datapacks.
+
+The final compatibility build was tested with generic mobs and CustomNPCs.
+Equipment is read from the live entity, so intentional weapon changes are
+preserved while Epic Fight held-item capabilities and native weapon motions
+refresh after combat, reloads, patch changes, and world reloads.
 
 ---
 
@@ -582,16 +587,15 @@ datapack entry.
 | Stun command events | `stun_command_list` |
 | Custom animations | `animation` behavior with full modifier support |
 
-### ⚠️ Untested / Experimental
+### Optional edge cases
 
 | Feature | Risk |
 |---------|------|
-| Crossbow / ProjectileWeaponItem reload via `reload` behavior | Vanilla path — should work but not verified |
-| `ammo_has_reserve` with `customnpcs:drop` slots | CustomNPCs API edge cases possible |
-| `has_gear_in_inventory` with `SimpleContainer` mobs | Only works if entity implements `InventoryCarrier` |
-| Multiple concurrent TACZ guns (dual-wield) | Hand resolution logic uses `findGunHand`; only one gun fires at a time |
-| `stun_command_list` format | Parsing confirmed; command execution not stress-tested |
-| Non-humanoid entity types | `AdvancedCustomHumanoidMobPatch` expects humanoid armature |
+| Crossbow / ProjectileWeaponItem reload via `reload` behavior | Use the native Epic Fight projectile path; TACZ fields apply only to TACZ guns |
+| `ammo_has_reserve` with `customnpcs:drop` slots | Slot behavior depends on the installed CustomNPCs inventory layout |
+| `has_gear_in_inventory` with `SimpleContainer` mobs | Requires the entity to expose an inventory capability |
+| Multiple concurrent TACZ guns (dual-wield) | One gun hand is selected per firing cycle |
+| Non-humanoid entities | Use an armature and renderer supported by the selected patch |
 
 ---
 
@@ -623,3 +627,15 @@ out-of-combat refill behavior, rely on idle reload.
 
 Do not split configs by "mob vs CNPC" logic. Use the same behavior model and
 slot system unless you need CustomNPC-specific slot selectors.
+
+### Universal NBT patch selection
+
+An `nbt_tag` file is not limited to CNPCs. EFI checks all living mobs and
+applies the matching provider at runtime. The normal entity-path patch is the
+fallback; a matching NBT provider takes priority. The same JSON can therefore
+be shared by any number of mobs, and adding or removing the marker refreshes
+the provider without requiring a restart.
+
+For CustomNPCs, write the marker through the existing scripting API and let
+the addon refresh the Epic Fight provider. Do not duplicate the JSON once per
+NPC.

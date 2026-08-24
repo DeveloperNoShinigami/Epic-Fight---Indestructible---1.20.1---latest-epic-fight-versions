@@ -39,6 +39,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.entity.PathfinderMob;
 import net.minecraft.world.entity.ai.Brain;
 import net.minecraft.world.entity.ai.attributes.Attribute;
@@ -109,9 +110,13 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
-public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends HumanoidMobPatch<T>  {
+import com.nameless.indestructible.world.ai.CombatBehaviors.WanderMotionSet;
+import com.nameless.indestructible.world.capability.Utils.IAdvancedCapability;
+
+public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends HumanoidMobPatch<T> implements IAdvancedCapability {
 
     private final AdvancedCustomHumanoidMobPatchProvider provider;
+    private static final Set<AdvancedCustomHumanoidMobPatch<?>> PENDING_AI_REBUILDS = new java.util.HashSet<>();
     private final List<AmmoSlotConfig> ammoSlots;
     private final Map<WeaponCategory, Map<Style,GuardMotion>> weaponGuardMotions;
     private GuardMotion currentGuardMotion;
@@ -169,8 +174,9 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
     private Style lastOffHandStyle;
     private boolean lastBlockingState;
     private boolean pendingWeaponMotionResync;
+    private boolean infantryCombatAiRefreshQueued;
     private double cNPC_EpicFight_Addon$activeTaczCombatRange = -1.0D;
-    private static final float BASELINE_STEP_HEIGHT = 1.0F;
+    private static final float BASELINE_STEP_HEIGHT = 1.5F;
     private static final int STEP_ASSIST_COOLDOWN_TICKS = 8;
     private static final double STEP_ASSIST_MIN_HORIZONTAL_SPEED_SQR = 0.0009D;
     private static final int TACZ_SUSTAIN_KEEP_ALIVE_TICKS = 6;
@@ -180,7 +186,11 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
     private int taczSustainKeepAliveTicks;
     private float taczSustainStaminaCost;
     @Nullable
+    private yesman.epicfight.api.asset.AssetAccessor<? extends StaticAnimation> taczAimAnimation;
+    @Nullable
     private String taczSustainFireMode;
+    /** Prevents a provider/equipment refresh from mutating GoalSelector while it is being ticked. */
+    private boolean aiInitializationQueued;
 
     public AdvancedCustomHumanoidMobPatch(Faction faction, AdvancedCustomHumanoidMobPatchProvider provider) {
         super(faction);
@@ -228,6 +238,9 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
         this.initialized = true;
         this.original.getAttributes().supplier = new AttributeSupplier(putEpicFightAttributes(this.original.getAttributes().supplier.instances));
         this.initAttributes();
+        // Keep CNPC movement compatible with vanilla one-block navigation and
+        // Epic Fight dodge/backstep movement from the first server tick.
+        this.original.setMaxUpStep(BASELINE_STEP_HEIGHT);
         if (!entityIn.level().isClientSide() && !this.original.isNoAi()) {
             this.initAI();
         }
@@ -244,10 +257,75 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
         if(!this.isLogicalClient()){
             this.getEventManager().initPassiveEvent(this.provider);
             this.resetMotion();
-            this.forceWeaponMotionResync();
+        this.forceWeaponMotionResync();
         }
         this.bossBar = this.provider.getBossBar() == null ? BOSS_BAR : this.provider.getBossBar();
         this.customName = this.provider.getName() == null ? this.getOriginal().getType().getDescription() : Component.translatable(this.provider.getName());
+    }
+
+    /**
+     * Provider replacement and held-item updates can happen from a LivingTick
+     * callback while Mob.serverAiStep is iterating GoalSelector. Epic Fight's
+     * base implementation removes/adds goals immediately, which causes a
+     * ConcurrentModificationException. Rebuild goals between entity ticks.
+     */
+    @Override
+    protected void initAI() {
+        if (this.original.level().isClientSide()) {
+            super.initAI();
+            return;
+        }
+
+        MinecraftServer server = this.original.level().getServer();
+        if (server == null) {
+            super.initAI();
+            return;
+        }
+
+        this.queueAiRebuild();
+    }
+
+    private void queueAiRebuild() {
+        if (!this.aiInitializationQueued) {
+            this.aiInitializationQueued = true;
+            PENDING_AI_REBUILDS.add(this);
+        }
+    }
+
+    /**
+     * Compatibility entry point for integrations that used to rebuild goals
+     * directly from an entity callback.  The actual mutation is deferred to
+     * the next server-tick START phase.
+     */
+    public void requestAiRebuild() {
+        if (!this.original.level().isClientSide()) {
+            this.queueAiRebuild();
+        }
+    }
+
+    /** Called from EFI's server-tick END hook, outside Mob.serverAiStep. */
+    public static void processQueuedAiRebuilds() {
+        if (PENDING_AI_REBUILDS.isEmpty()) {
+            return;
+        }
+
+        List<AdvancedCustomHumanoidMobPatch<?>> pending = new ArrayList<>(PENDING_AI_REBUILDS);
+        PENDING_AI_REBUILDS.clear();
+        for (AdvancedCustomHumanoidMobPatch<?> patch : pending) {
+            patch.aiInitializationQueued = false;
+            if (patch.original == null || patch.original.isRemoved() || !patch.original.isAlive()
+                    || patch.original.level().isClientSide() || patch.original.isNoAi()) {
+                continue;
+            }
+
+            // This is the only place the queued advanced patch is allowed to
+            // mutate GoalSelector. The server is no longer iterating goals.
+            patch.rebuildAiNow();
+        }
+    }
+
+    private void rebuildAiNow() {
+        super.initAI();
     }
 
     private Map<Attribute, AttributeInstance> putEpicFightAttributes(Map<Attribute, AttributeInstance> originalMap) {
@@ -283,6 +361,7 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
             this.original.setMaxUpStep(BASELINE_STEP_HEIGHT);
         }
         this.tickUniversalStepAssist();
+        this.tickTaczAimTracking();
 
         if (this.pendingWeaponMotionResync) {
             this.pendingWeaponMotionResync = false;
@@ -408,6 +487,44 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
         return this.original.getMoveControl().hasWanted();
     }
 
+    /**
+     * TACZ aim is an operator state, while Entity.lookAt is only updated when
+     * the datapack behavior is entered. Refresh both every server tick so a
+     * moving target cannot leave the NPC visually aiming at its old position.
+     * This also keeps aiming independent from the shoot behavior series.
+     */
+    private void tickTaczAimTracking() {
+        boolean sustainingFire = this.taczSustainRequested || this.taczSustainActive;
+        if (!TaczCompat.isAiming(this.original) && !sustainingFire) {
+            this.syncTaczAimAnimation(false);
+            return;
+        }
+
+        LivingEntity target = this.getTarget();
+        InteractionHand gunHand = TaczCompat.findGunHand(this.original, null);
+        if (target == null || !target.isAlive() || gunHand == null
+                || TaczCompat.isReloading(this.original)
+                || !this.isWithinTaczEngagementRange()) {
+            TaczCompat.stopAiming(this.original);
+            this.syncTaczAimAnimation(false);
+            this.clearTaczSustainedFire();
+            return;
+        }
+
+        this.original.lookAt(target, 30.0F, 30.0F);
+        // Reassert the operator state in case TACZ cleared it during a shot
+        // or an animation transition. Keep the aim state alive for the whole
+        // sustained-fire window, not only while the aim behavior is selected.
+        if (!TaczCompat.isAiming(this.original)) {
+            if (!TaczCompat.tryAim(this.original, gunHand)) {
+                this.clearTaczSustainedFire();
+                this.syncTaczAimAnimation(false);
+                return;
+            }
+        }
+        this.syncTaczAimAnimation(true);
+    }
+
     @Override
     protected void clientTick(LivingEvent.LivingTickEvent event) {
         boolean shouldRunning = this.original.walkAnimation.speed() >= 0.7F;
@@ -523,6 +640,12 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
     public void setStrafingDirection(float forward, float clockwise){
         this.strafingForward = forward;
         this.strafingClockwise = clockwise;
+    }
+
+    @Override
+    public void actStrafing(WanderMotionSet motionSet) {
+        this.setStrafingTime(motionSet.time);
+        this.setStrafingDirection(motionSet.forward, motionSet.clockwise);
     }
 
     public void updateActiveTaczCombatRange(@Nullable CombatBehaviors.BehaviorSeries<?> currentBehaviorSeries) {
@@ -720,6 +843,15 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
             return false;
         }
 
+        // TACZ may clear its operator state during recoil or between shots.
+        // Reassert aim immediately before firing so every shot has a visible
+        // aim phase and the client receives the corresponding AIM motion.
+        this.original.lookAt(target, 30.0F, 30.0F);
+        if (!TaczCompat.isAiming(this.original) && !TaczCompat.tryAim(this.original, gunHand)) {
+            return false;
+        }
+        this.syncTaczAimAnimation(true);
+
         this.taczSustainStaminaCost = staminaCost;
         this.taczSustainFireMode = fireMode;
         this.taczSustainRequested = true;
@@ -770,6 +902,8 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
             return false;
         }
 
+        this.syncTaczAimAnimation(true);
+
         if (!alreadyAiming && staminaCost > 0.0F) {
             this.setStamina(this.getStamina() - staminaCost);
         }
@@ -781,6 +915,30 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
         this.resetMotion();
         this.setInactionTime(Math.max(this.getInactionTime(), effectiveInactionTime));
         return true;
+    }
+
+    /**
+     * TACZ synchronizes its operator state, but NPC clients do not always
+     * receive the same operator transition as players. Explicitly synchronize
+     * the resolved Epic Fight AIM living animation so the client shows the
+     * aiming pose before the shot packet arrives.
+     */
+    private void syncTaczAimAnimation(boolean aiming) {
+        if (this.isLogicalClient()) {
+            return;
+        }
+
+        if (aiming && this.taczAimAnimation == null) {
+            yesman.epicfight.api.asset.AssetAccessor<? extends StaticAnimation> animation =
+                    this.getAnimator().getLivingAnimation(LivingMotions.AIM, null);
+            if (animation != null && !AnimationManager.checkNull(animation)) {
+                this.taczAimAnimation = animation;
+                this.playAnimationSynchronized(animation, 0.1F);
+            }
+        } else if (!aiming && this.taczAimAnimation != null) {
+            this.stopPlaying(this.taczAimAnimation);
+            this.taczAimAnimation = null;
+        }
     }
 
     public boolean hasActiveTaczCombatTarget() {
@@ -820,7 +978,7 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
             case "bolt_action" -> 36.0D;
             case "launcher" -> 32.0D;
             case "minigun" -> 26.0D;
-            default -> this.getResolvedWeaponCategory(hand) == CapabilityItem.WeaponCategories.RANGED ? 20.0D : 0.0D;
+            default -> isRangedWeaponCategory(this.getResolvedWeaponCategory(hand)) ? 20.0D : 0.0D;
         };
     }
 
@@ -852,6 +1010,13 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
             this.clearTaczSustainedFire();
             return;
         }
+
+        this.original.lookAt(target, 30.0F, 30.0F);
+        if (!TaczCompat.isAiming(this.original) && !TaczCompat.tryAim(this.original, gunHand)) {
+            this.clearTaczSustainedFire();
+            return;
+        }
+        this.syncTaczAimAnimation(true);
 
         if (!TaczCompat.tryShoot(this.original, target, gunHand, this.taczSustainFireMode)) {
             ItemStack heldGun = this.original.getItemInHand(gunHand);
@@ -1296,8 +1461,11 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
             return;
         }
 
-        ItemStack mainHandItem = this.original.getMainHandItem();
-        this.setAIAsInfantry(isNativeRangedWeaponForAdvancedCombat(mainHandItem));
+        // Weapon motion synchronization runs from the entity living tick.
+        // GoalSelector mutations must use the same safe END-of-server-tick
+        // queue as provider/initAI changes.
+        this.infantryCombatAiRefreshQueued = true;
+        this.queueAiRebuild();
     }
 
     public static boolean isNativeRangedWeaponForAdvancedCombat(ItemStack stack) {
@@ -1313,12 +1481,19 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
     }
 
     private WeaponCategory resolveWeaponCategory(CapabilityItem itemCap, ItemStack heldItem) {
-        WeaponCategory category = itemCap.getWeaponCategory();
-        if (category == CapabilityItem.WeaponCategories.FIST && TaczCompat.isTaczGun(heldItem)) {
-            return CapabilityItem.WeaponCategories.RANGED;
+        // TACZ guns do not expose themselves as Epic Fight BOW/CROSSBOW
+        // capabilities. Route them through BOW so datapack combat_behavior
+        // can select tacz_aim/tacz_shoot/reload consistently.
+        if (TaczCompat.isTaczGun(heldItem)) {
+            return CapabilityItem.WeaponCategories.BOW;
         }
-
+        WeaponCategory category = itemCap.getWeaponCategory();
         return category;
+    }
+
+    private static boolean isRangedWeaponCategory(WeaponCategory category) {
+        return category == CapabilityItem.WeaponCategories.BOW
+                || category == CapabilityItem.WeaponCategories.CROSSBOW;
     }
 
     protected CombatBehaviors.Builder<HumanoidMobPatch<?>> getHoldingItemWeaponMotionBuilder() {
@@ -1334,6 +1509,26 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
             }
 
             return null;
+        }
+
+        // A ranged behavior series can contain the gear swap that equips the
+        // actual gun. At patch construction time the NPC may still hold a
+        // placeholder item, so selecting only by the current item would leave
+        // the entity with no AnimatedAttackGoal and therefore idle forever.
+        // Prefer the configured BOW series for that transition, then use the
+        // first configured series as a general fallback.
+        if (this.weaponAttackMotions != null && !this.weaponAttackMotions.isEmpty()) {
+            Map<Style, CombatBehaviors.Builder<HumanoidMobPatch<?>>> ranged =
+                    this.weaponAttackMotions.get(CapabilityItem.WeaponCategories.BOW);
+            if (ranged != null && !ranged.isEmpty()) {
+                return ranged.getOrDefault(CapabilityItem.Styles.COMMON, ranged.values().iterator().next());
+            }
+
+            Map<Style, CombatBehaviors.Builder<HumanoidMobPatch<?>>> first =
+                    this.weaponAttackMotions.values().iterator().next();
+            if (first != null && !first.isEmpty()) {
+                return first.getOrDefault(CapabilityItem.Styles.COMMON, first.values().iterator().next());
+            }
         }
 
         return null;
@@ -1463,12 +1658,18 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
         CapabilityItem offhandCap = this.getAdvancedHoldingItemCapability(InteractionHand.OFF_HAND);
         WeaponCategory mainhandCategory = this.resolveWeaponCategory(mainhandCap, this.original.getMainHandItem());
 
-        for (Pair<LivingMotion, AnimationAccessor<? extends StaticAnimation>> pair : this.provider.getDefaultAnimations()) {
-            newLivingAnimations.put(pair.getFirst(), pair.getSecond());
-        }
-
+        // Native held-item motions form the base. Datapack defaults fill only
+        // missing entries; humanoid_weapon_motions remains the explicit override.
         newLivingAnimations.putAll(offhandCap.getLivingMotionModifier(this, InteractionHand.OFF_HAND));
         newLivingAnimations.putAll(mainhandCap.getLivingMotionModifier(this, InteractionHand.MAIN_HAND));
+
+        // A datapack default is a fallback, not a replacement for the held
+        // item's native capability motions. This is essential for TACZ and
+        // Epic Arsenal: their player animations are supplied by the held item
+        // capability and must remain available to mob animators as well.
+        for (Pair<LivingMotion, AnimationAccessor<? extends StaticAnimation>> pair : this.provider.getDefaultAnimations()) {
+            newLivingAnimations.putIfAbsent(pair.getFirst(), pair.getSecond());
+        }
 
         if (this.weaponLivingMotions != null && this.weaponLivingMotions.containsKey(mainhandCategory)) {
             Map<Style, Set<Pair<LivingMotion, AnimationAccessor<? extends StaticAnimation>>>> mapByStyle = this.weaponLivingMotions.get(mainhandCategory);
@@ -1819,7 +2020,7 @@ public class AdvancedCustomHumanoidMobPatch<T extends PathfinderMob> extends Hum
         }
     }
 
-    private void forceWeaponMotionResync() {
+    public void forceWeaponMotionResync() {
         this.lastMainHandCategory = null;
         this.lastMainHandStyle = null;
         this.lastOffHandCategory = null;

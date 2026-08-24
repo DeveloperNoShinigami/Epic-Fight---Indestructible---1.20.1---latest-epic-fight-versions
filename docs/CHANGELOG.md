@@ -2,6 +2,19 @@
 
 All notable changes to EFI-Unofficial are documented in this file.
 
+## 2026-08-23 — Final compatibility build
+
+### Fixed
+- Universal runtime `nbt_tag` routing now works for generic mobs and CustomNPCs, with one patch safely shared by many entities.
+- Provider refresh preserves the active armature, held equipment, native Epic Fight living motions, and client synchronization.
+- TACZ aim is maintained throughout the firing loop; shooting follows live gun cadence and reload works with or without a target.
+- AI goal mutation is deferred safely during mob ticking, preventing the skeleton/mob refresh crash.
+- Epic Fight melee damage and stun behavior work between NPCs, while CNPC faction relationships remain authoritative for allies.
+
+### Verified
+- Minecraft 1.20.1 / Forge 47.4.0 with Epic Fight 20.14.17.
+- Native weapon motions, guard, stun, knockdown, fall, neutralize, TACZ ranged behavior, and CustomNPC equipment retention.
+
 ## 2026-04-24
 
 ### Added

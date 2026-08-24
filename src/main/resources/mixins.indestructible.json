@@ -8,14 +8,13 @@
     "BehaviorMixin",
     "BehaviorSeriesMixin",
     "CombatBehaviorsMixin",
+    "GoalSelectorMutationGuardMixin",
     "MixinCapabilityDispatcherAccessor",
     "MainFrameAnimationMixin",
     "TargetInDistanceMixin"
   ],
   "client": [
     "HealthBarIndicatorMixin"
-  ],
-  "server": [
   ],
   "injectors": {
     "defaultRequire": 1

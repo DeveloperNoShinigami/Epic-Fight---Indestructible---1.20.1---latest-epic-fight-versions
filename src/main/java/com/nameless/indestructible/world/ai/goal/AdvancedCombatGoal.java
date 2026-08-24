@@ -45,6 +45,10 @@ public class AdvancedCombatGoal<T extends AdvancedCustomHumanoidMobPatch<?>> ext
 				CombatBehaviors.BehaviorSeries<?> currentBehaviorSeries = count >= 0
 						? ((CombatBehaviorsMixin<?>)combatBehaviors).getBehaviorSeriesList().get(count)
 						: null;
+				boolean preserveLoop = this.shouldPreserveCurrentTaczLoop(currentBehaviorSeries);
+				if (preserveLoop) {
+					this.mobpatch.refreshTaczSustainHeartbeat();
+				}
 				this.mobpatch.updateActiveTaczCombatRange(currentBehaviorSeries);
 				if(mobpatch.interrupted){
 					this.mobpatch.clearActiveTaczCombatRange();
@@ -54,7 +58,7 @@ public class AdvancedCombatGoal<T extends AdvancedCustomHumanoidMobPatch<?>> ext
 				}
 
 				if (state.canBasicAttack() && !inaction) {
-					CombatBehaviors.Behavior<HumanoidMobPatch<?>> result = this.shouldPreserveCurrentTaczLoop(currentBehaviorSeries)
+					CombatBehaviors.Behavior<HumanoidMobPatch<?>> result = preserveLoop
 						? this.tryProceedCurrentLoopingSeries(currentBehaviorSeries)
 						: this.combatBehaviors.tryProceed();
 

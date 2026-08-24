@@ -15,15 +15,19 @@ EFI-Unofficial extends that base with:
 - `nbt_tag` routing, allowing advanced patches to be selected by entity NBT instead of only fixed registration paths
 - Extended `gear_swap` support, including richer item matching, TACZ `gun_id` support, and multi-slot array syntax
 - Better support for modern Epic Fight, CustomNPCs, and TACZ-driven datapack workflows
+- Universal runtime `nbt_tag` patch selection for generic mobs and CustomNPCs
+- Equipment retention and native held-item living-motion synchronization
+- Reliable NPC-to-NPC Epic Fight stun behavior and sustained TACZ aim/shoot/reload cycles
 - Full documentation for the advanced behavior system and its syntax
 
 ---
 
 ## Compatibility
 
-- Epic Fight `20.14.11+`
-- `CustomNPCs-1.20.1-GBPort-Unofficial-1.20.1.20260227`
-- `tacz-1.20.1-1.1.7-hotfix2`
+- Epic Fight `20.14.17`
+- `CustomNPCs-1.20.1.20260711` (CurseForge file `8414335`)
+- `tacz-1.20.1-1.1.8-hotfix`
+- Forge `47.4.0` on Minecraft `1.20.1`
 
 ---
 

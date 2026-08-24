@@ -7,6 +7,7 @@
 // - ammo_slots routing for mobs + CustomNPCs
 // - gear_swap
 // - extension predicates/behaviors
+// - native held-item living motions when humanoid_weapon_motions is omitted
 //
 // --------------------------------------------------------------------------
 // Registration path A (core): entity-keyed filename
@@ -20,6 +21,20 @@
 // Example nbt_tag values:
 // "nbt_tag": "{my_boss_marker:1b}"
 // "nbt_tag": "{CustomName:'{\"text\":\"Super Creeper\"}'}"
+//
+// CNPC NBT selection:
+//   function init(e) {
+//       e.npc.setEFNbtMarker("efi_role", "ranged");
+//   }
+// This writes ForgeData.efi_role and matches:
+//   "nbt_tag": "{ForgeData:{efi_role:\"ranged\"}}"
+// The raw equivalent is:
+//   var npc = e.npc.getMCEntity();
+//   npc.getPersistentData().putString("efi_role", "ranged");
+//   npc.display.refreshEFPatch();
+// setEFModel remains available when explicit model-key selection is preferred.
+// Advanced EFI files use data/customnpcs/adv_npc_epicfight_mobpatch/.
+// One nbt_tag file may be shared by any number of generic mobs or CNPCs.
 
 {
   "nbt_tag": "{my_boss_marker:1b}",
@@ -37,12 +52,21 @@
     "stamina_regan_multiply": 1.0,
     "stamina_regan_delay": 30,
     "attack_radius": 1.5,
-    "guard_radius": 3.0
+    "guard_radius": 3.0,
+    "max_stun_shield": 0.0
+  },
+
+  "stun_animations": {
+    "short": "epicfight:biped/combat/hit_short",
+    "long": "epicfight:biped/combat/hit_long",
+    "knockdown": "epicfight:biped/combat/knockdown",
+    "fall": "epicfight:biped/living/landing",
+    "neutralize": "epicfight:biped/skill/guard_break1"
   },
 
   "humanoid_weapon_motions": [
     {
-      "weapon_categories": ["ranged"],
+      "weapon_categories": ["bow", "crossbow"],
       "style": "common",
       "livingmotions": {
         "idle": "epicfight:biped/living/hold_crossbow",
@@ -64,7 +88,7 @@
   "combat_behavior": [
     {
       // Recommended TACZ pattern: ranged + common
-      "weapon_categories": ["ranged"],
+      "weapon_categories": ["bow", "crossbow"],
       "style": "common",
       "behavior_series": [
         {
@@ -77,12 +101,13 @@
                 {"predicate": "has_target"},
                 {"predicate": "within_distance", "min": 6.0, "max": 28.0}
               ],
-              "tacz_aim": {"inaction_time": 2},
+              "tacz_aim": {"inaction_time": 10},
               "end_by_hurt_level": 2
             },
             {
               "conditions": [
-                {"predicate": "within_distance", "min": 6.0, "max": 28.0}
+                {"predicate": "within_distance", "min": 6.0, "max": 28.0},
+                {"predicate": "tacz_aiming"}
               ],
               "tacz_shoot": {"fire_mode": "AUTO"},
               "end_by_hurt_level": 2
@@ -90,6 +115,26 @@
             {
               "conditions": [
                 {"predicate": "ammo_is_empty"}
+              ],
+              "reload": 20,
+              "require_ammo": false,
+              "end_by_hurt_level": 2
+            },
+            {
+              // Reload below-full magazines while a target is still present.
+              "conditions": [
+                {"predicate": "has_target"},
+                {"predicate": "ammo_not_full"}
+              ],
+              "reload": 20,
+              "require_ammo": false,
+              "end_by_hurt_level": 2
+            },
+            {
+              // Reload after a weapon swap or while the NPC is idle.
+              "conditions": [
+                {"predicate": "no_target"},
+                {"predicate": "ammo_not_full"}
               ],
               "reload": 20,
               "require_ammo": false,
@@ -143,6 +188,24 @@
 // require_ammo behavior:
 // - true  = consume reserve ammo from declared ammo_slots
 // - false = direct-fill reload (infinite-ammo style)
+//
+// Exact EFI 20.14.17 forms:
+// - "reload": <integer ticks>; require_ammo is its sibling boolean.
+// - "tacz_aim": <integer ticks> or {"inaction_time": <integer ticks>}
+// - "tacz_shoot": <integer ticks> or {"fire_mode": "SEMI"|"AUTO"|"BURST"}
+// - "ranged" is obsolete; use registered categories such as bow/crossbow.
+// - "torment" is not a valid 20.14.17 weapon category.
+// - Include stun_animations for visible Epic Fight hit reactions.
+// - Omit humanoid_weapon_motions to use the held weapon's native Epic Fight
+//   living motions; include it only for an explicit override.
+// - Keep the behavior_series looping so tacz_aim is refreshed throughout
+//   sustained fire and the NPC continues looking at its target.
+//
+// CNPC addon NBT note:
+// - For CNPC files, nbt_tag is matched against the entity's serialized NBT.
+// - Script persistent data is under ForgeData, so match ForgeData.<field>.
+// - The addon refreshes the CNPC patch when setEFNbtMarker is called.
+// - One matching nbt_tag file is shared by any number of mobs or CNPCs.
 //
 // Reminder:
 // - TACZ is optional and additive.

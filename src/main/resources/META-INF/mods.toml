@@ -39,7 +39,7 @@ new conditions and behaviors that better enhance your advanced mob combat!
 [[dependencies.indestructible]]
     modId="epicfight"
     mandatory=true
-    versionRange="[20.14.11,)"
+    versionRange="[20.14.17,)"
     ordering="AFTER"
     side="BOTH"
 [[dependencies.indestructible]]

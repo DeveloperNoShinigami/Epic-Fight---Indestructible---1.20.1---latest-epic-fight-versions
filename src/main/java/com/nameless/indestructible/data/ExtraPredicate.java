@@ -1,6 +1,7 @@
 package com.nameless.indestructible.data;
 
 import com.nameless.indestructible.world.capability.AdvancedCustomHumanoidMobPatch;
+import com.nameless.indestructible.world.capability.TaczCompat;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.ResourceLocation;
@@ -350,6 +351,14 @@ public class ExtraPredicate {
         public boolean predicate(T mobpatch) {
             LivingEntity target = mobpatch.getTarget();
             return target != null && target.isAlive();
+        }
+    }
+
+    /** True only after the TACZ operator has entered its synchronized aiming state. */
+    public static class TaczAiming<T extends MobPatch<?>> extends BaseCondition<T> {
+        public boolean predicate(T mobpatch) {
+            return mobpatch instanceof AdvancedCustomHumanoidMobPatch<?> advanced
+                    && TaczCompat.isAiming(advanced.getOriginal());
         }
     }
 

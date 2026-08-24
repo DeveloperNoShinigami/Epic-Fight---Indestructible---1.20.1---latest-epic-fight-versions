@@ -83,6 +83,8 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
     private static final Map<EntityType<?>, CompoundTag> TAGMAP = Maps.newHashMap();
     private static final Map<EntityType<?>, MobPatchReloadListener.AbstractMobPatchProvider> ADVANCED_MOB_PATCH_PROVIDERS = Maps.newHashMap();
     private static final List<AdvancedCustomHumanoidMobPatchProvider> NBT_TAG_PROVIDERS = Lists.newArrayList();
+    private static final Map<String, AdvancedCustomHumanoidMobPatchProvider> NBT_TAG_PROVIDERS_BY_ID = Maps.newHashMap();
+    private static final List<CompoundTag> NBT_TAG_CLIENT_DATA = Lists.newArrayList();
 
     public AdvancedMobpatchReloader() {
         super(GSON, "advanced_mobpatch");
@@ -93,6 +95,8 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
         // Clear both provider maps on reload
         ADVANCED_MOB_PATCH_PROVIDERS.clear();
         NBT_TAG_PROVIDERS.clear();
+        NBT_TAG_PROVIDERS_BY_ID.clear();
+        NBT_TAG_CLIENT_DATA.clear();
         TAGMAP.clear();
 
         for (Map.Entry<ResourceLocation, JsonElement> entry : objectIn.entrySet()) {
@@ -114,7 +118,10 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
                     AdvancedCustomHumanoidMobPatchProvider provider = deserializeMobPatchProvider(null, tag, false);
                     provider.nbtMatcher = nbtMatcher;
                     NBT_TAG_PROVIDERS.add(provider);
-                    Indestructible.LOGGER.info("[Advanced Mobpatch] Loaded NBT-tag provider from " + rl + " with matcher: " + nbtTagString);
+                    NBT_TAG_PROVIDERS_BY_ID.put(rl.toString(), provider);
+                    CompoundTag clientTag = filterClientData(tag);
+                    clientTag.putString("id", rl.toString());
+                    NBT_TAG_CLIENT_DATA.add(clientTag);
                 } catch (CommandSyntaxException e) {
                     Indestructible.LOGGER.error("[Advanced Mobpatch] Invalid SNBT in nbt_tag field for " + rl, e);
                     continue;
@@ -139,6 +146,7 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
                 }
             }
         }
+        Indestructible.LOGGER.info("[Advanced Mobpatch] Loaded JSON files: {}", objectIn.size());
     }
 
     public static AdvancedCustomHumanoidMobPatchProvider deserializeMobPatchProvider(EntityType<?> entityType, CompoundTag tag, boolean clientSide) {
@@ -209,7 +217,11 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
         extract.putBoolean("isHumanoid", original.contains("isHumanoid") ? original.getBoolean("isHumanoid") : false);
         extract.put("renderer", original.get("renderer"));
         extract.put("faction", original.get("faction"));
-        extract.put("default_livingmotions", original.get("default_livingmotions"));
+        // This block is optional.  Leaving it absent is meaningful: the mob
+        // should retain the held-item capability's native living motions.
+        if (original.contains("default_livingmotions")) {
+            extract.put("default_livingmotions", original.get("default_livingmotions"));
+        }
         extract.put("attributes", original.get("attributes"));
         if (original.contains("nbt_tag")) {
             extract.put("nbt_tag", original.get("nbt_tag"));
@@ -237,21 +249,38 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
             return entry.getValue();
         });
 
-        return tagStream;
+        return Stream.concat(tagStream, NBT_TAG_CLIENT_DATA.stream());
     }
 
     public static int getTagCount() {
-        return TAGMAP.size();
+        return TAGMAP.size() + NBT_TAG_CLIENT_DATA.size();
     }
 
     public static List<AdvancedCustomHumanoidMobPatchProvider> getNbtTagProviders() {
         return NBT_TAG_PROVIDERS;
     }
 
+    @Nullable
+    public static AdvancedCustomHumanoidMobPatchProvider getNbtProvider(String id) {
+        return NBT_TAG_PROVIDERS_BY_ID.get(id);
+    }
+
+    @Nullable
+    public static String getNbtProviderId(AdvancedCustomHumanoidMobPatchProvider provider) {
+        for (Map.Entry<String, AdvancedCustomHumanoidMobPatchProvider> entry : NBT_TAG_PROVIDERS_BY_ID.entrySet()) {
+            if (entry.getValue() == provider) {
+                return entry.getKey();
+            }
+        }
+        return null;
+    }
+
     @OnlyIn(Dist.CLIENT)
     public static void processServerPacket(SPDatapackSync packet) {
         ADVANCED_MOB_PATCH_PROVIDERS.clear();
         NBT_TAG_PROVIDERS.clear();
+        NBT_TAG_PROVIDERS_BY_ID.clear();
+        NBT_TAG_CLIENT_DATA.clear();
 
         for (CompoundTag tag : packet.getTags()) {
             // Handle NBT_TAG entries
@@ -262,6 +291,9 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
                     AdvancedCustomHumanoidMobPatchProvider provider = deserializeMobPatchProvider(null, tag, true);
                     provider.nbtMatcher = nbtMatcher;
                     NBT_TAG_PROVIDERS.add(provider);
+                    if (tag.contains("id")) {
+                        NBT_TAG_PROVIDERS_BY_ID.put(tag.getString("id"), provider);
+                    }
                 } catch (CommandSyntaxException e) {
                     Indestructible.LOGGER.error("[Advanced Mobpatch] Invalid SNBT in nbt_tag field on client", e);
                 }
@@ -527,10 +559,26 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
                 CombatBehaviors.Behavior.Builder<T> behaviorBuilder = CombatBehaviors.Behavior.builder();
                 CompoundTag behavior = behaviorList.getCompound(j);
                 ListTag conditionList = behavior.getList("conditions", 10);
+                if (!validateBehaviorSchema(behavior, i, j)) {
+                    // Do not silently turn an obsolete ranged behavior into a
+                    // no-op. The rest of the behavior series remains loadable so
+                    // one bad entry cannot discard the NPC's complete patch.
+                    continue;
+                }
                 int phase = behavior.contains("set_phase") ? behavior.getInt("set_phase") : -1;
                 int hurt_level = behavior.contains("end_by_hurt_level") ? behavior.getInt("end_by_hurt_level") : 2;
                 if(behavior.contains("animation")) {
                     AnimationAccessor<? extends StaticAnimation> animation = AnimationManager.byKey(ResourceLocation.parse(behavior.getString("animation")));
+                    if (animation == null || animation.get() == null) {
+                        // A datapack may reference an animation supplied by an
+                        // optional addon that is not installed.  Do not keep
+                        // a null asset in the behavior list: Epic Fight's
+                        // server animator dereferences it during the first AI
+                        // tick and would otherwise crash the dedicated server.
+                        Indestructible.LOGGER.warn("[Advanced Mobpatch] Skipping unavailable animation '{}' at series {}, behavior {}",
+                                behavior.getString("animation"), i, j);
+                        continue;
+                    }
                     float speed = behavior.contains("play_speed") ? (float) behavior.getDouble("play_speed") : 1F;
                     float stamina = behavior.contains("stamina") ? (float) behavior.getDouble("stamina") : 0F;
                     float convertTime = behavior.contains("convert_time") ? (float)behavior.getDouble("convert_time") : 0F;
@@ -706,6 +754,30 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
         }
 
         return builder;
+    }
+
+    private static boolean validateBehaviorSchema(CompoundTag behavior, int seriesIndex, int behaviorIndex) {
+        String[] obsoleteKeys = {"ranged", "ranged_attack", "ranged_behavior", "shoot", "aim"};
+        for (String key : obsoleteKeys) {
+            if (behavior.contains(key)) {
+                Indestructible.LOGGER.warn("Ignoring obsolete ranged behavior key '{}' at series {}, behavior {}. Use reload, tacz_aim, or tacz_shoot.", key, seriesIndex, behaviorIndex);
+                return false;
+            }
+        }
+
+        if (behavior.contains("reload") && !behavior.contains("reload", 3)) {
+            Indestructible.LOGGER.warn("Invalid reload behavior at series {}, behavior {}: reload must be an integer tick duration.", seriesIndex, behaviorIndex);
+            return false;
+        }
+        if (behavior.contains("tacz_aim") && !behavior.contains("tacz_aim", 3) && !behavior.contains("tacz_aim", 10)) {
+            Indestructible.LOGGER.warn("Invalid tacz_aim behavior at series {}, behavior {}: use an integer or object form.", seriesIndex, behaviorIndex);
+            return false;
+        }
+        if (behavior.contains("tacz_shoot") && !behavior.contains("tacz_shoot", 3) && !behavior.contains("tacz_shoot", 10)) {
+            Indestructible.LOGGER.warn("Invalid tacz_shoot behavior at series {}, behavior {}: use an integer or object form.", seriesIndex, behaviorIndex);
+            return false;
+        }
+        return true;
     }
 
 
@@ -1177,6 +1249,10 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
                 predicate = new ExtraPredicate.HasTarget<>();
                 break;
 
+            case "tacz_aiming":
+                predicate = new ExtraPredicate.TaczAiming<>();
+                break;
+
             case "phase":
                 if(!args.contains("min",3)){
                     loggerNote.add(new String[] {"phase","min","int",""});
@@ -1186,10 +1262,6 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
                 }
                 predicate = new ExtraPredicate.Phase<>(args.getInt("min"),args.getInt("max"));
                 break;
-        }
-
-        for (String[] formatArgs : loggerNote) {
-            Indestructible.LOGGER.info(String.format("[Custom Entity Error] can't find a proper argument for %s. [name: %s, type: %s, default: %s]", (Object[])formatArgs));
         }
 
         if (predicate == null) {
@@ -1287,6 +1359,7 @@ public class AdvancedMobpatchReloader extends SimpleJsonResourceReloadListener {
     }
 
     private static void loggerNote(org.apache.logging.log4j.Logger logger, String type, String name, String valueType, String defaultValue) {
-        logger.info(String.format("[Custom Entity Error] can't find a proper argument for %s. [name: %s, type: %s, default: %s]", type, name, valueType, defaultValue));
+        // Optional schema fields use parser defaults; do not log each omitted
+        // optional field during every datapack reload.
     }
 }

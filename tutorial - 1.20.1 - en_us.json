@@ -18,3 +18,25 @@
 // - TACZ is an optional extension, not the centerpiece.
 // - nbt_tag is also an extension path, alternative to registry-path-keyed files.
 // - Base Epic Fight datapack logic remains valid and supported.
+// - Native held-item living motions are used when humanoid_weapon_motions is omitted.
+//
+// CNPC quick start (actual addon schema):
+// 1. Put the patch at data/customnpcs/npc_epicfight_mobpatch/customnpc.json.
+// 2. In the NPC script write a marker:
+//      function init(e) { e.npc.setEFNbtMarker("efi_role", "ranged"); }
+// 3. Match it in the patch with:
+//      "nbt_tag": "{ForgeData:{efi_role:\"ranged\"}}"
+// 4. Include attributes.max_stun_shield and a stun_animations object.
+// 5. Use "bow"/"crossbow" for ranged weapon_categories; "ranged" is obsolete.
+// 6. Test stun with an Epic Fight combat-mode attack. Vanilla damage produces
+//    vanilla knockback but does not create an EpicFightDamageSource.
+// 7. The same nbt_tag file can be shared by any number of mobs or CNPCs.
+// 8. For TACZ, use a looping tacz_aim -> tacz_shoot series and add reload
+//    branches for both has_target and no_target when idle reload is desired.
+//
+// Final quick test:
+// - /reload after changing a patch
+// - spawn two entities with the same nbt_tag marker
+// - verify native held-item motions when humanoid_weapon_motions is omitted
+// - verify Epic Fight hit_short/hit_long, knockdown, fall, and neutralize
+// - verify aim remains active until the firing cycle reloads

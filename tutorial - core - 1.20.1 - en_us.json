@@ -9,6 +9,21 @@
 // - Filename must match entity registry path exactly.
 // - Example for customnpcs:customnpc:
 //   data/mypack/advanced_mobpatch/customnpcs/customnpc.json
+//
+// CustomNPCs addon path:
+//   data/customnpcs/npc_epicfight_mobpatch/customnpc.json
+// NBT-selected CNPC example:
+//   function init(e) {
+//       e.npc.setEFNbtMarker("efi_role", "ranged");
+//   }
+// The matching datapack root is:
+//   "nbt_tag": "{ForgeData:{efi_role:\"ranged\"}}"
+// The addon refreshes the provider after the script writes the marker.
+// The marker is universal: EFI can apply the same patch to generic mobs and
+// CustomNPCs, and one matching file can be shared by many entities.
+// If humanoid_weapon_motions is omitted, Epic Fight uses the held weapon's
+// native living motions. Add that field only when an explicit override is
+// required.
 
 {
   "model": "epicfight:entity/skeleton",
@@ -25,7 +40,16 @@
     "stamina_regan_delay": 30,
     "max_strikes": 1,
     "attack_radius": 1.5,
-    "guard_radius": 3.0
+    "guard_radius": 3.0,
+    "max_stun_shield": 0.0
+  },
+
+  "stun_animations": {
+    "short": "epicfight:biped/combat/hit_short",
+    "long": "epicfight:biped/combat/hit_long",
+    "knockdown": "epicfight:biped/combat/knockdown",
+    "fall": "epicfight:biped/living/landing",
+    "neutralize": "epicfight:biped/skill/guard_break1"
   },
 
   "default_livingmotions": {
@@ -105,6 +129,12 @@
 // - stamina: self stamina check by absolute or ratio comparator
 // - using_item: target currently using item (optionally edible-only)
 // - phase: current phase integer is within min/max
+//
+// Stun requires an Epic Fight damage source. Vanilla hits can cause knockback
+// without entering Epic Fight's stun animation path. max_stun_shield 0.0 is a
+// useful baseline test; positive values absorb low-impact stun attempts.
+// For NPC-to-NPC stun, both entities must use the Epic Fight combat path;
+// CNPC faction relationships still protect allied CNPCs.
 //
 // Comparator values used by health/stamina checks:
 // - LESS_ABSOLUTE

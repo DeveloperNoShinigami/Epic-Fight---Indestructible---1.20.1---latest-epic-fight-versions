@@ -12,6 +12,7 @@ import yesman.epicfight.api.utils.math.ValueModifier;
 import yesman.epicfight.gameasset.Armatures;
 import yesman.epicfight.gameasset.ColliderPreset;
 import yesman.epicfight.gameasset.EpicFightSounds;
+import yesman.epicfight.gameasset.Animations;
 import yesman.epicfight.model.armature.HumanoidArmature;
 import yesman.epicfight.particle.EpicFightParticles;
 import yesman.epicfight.world.damagesource.EpicFightDamageTypeTags;
@@ -66,17 +67,13 @@ public class GuardAnimations {
                 .addProperty(AnimationProperty.AttackPhaseProperty.DAMAGE_MODIFIER, ValueModifier.setter(1F))).get();
 
         if(ModList.get().isLoaded("yamatomoveset")){
-            MOB_YAMATO_GUARD = builder.nextAccessor("guard/guard_yamato", accessor -> new CustomGuardAnimation(accessor,
-                    "yamatomoveset:biped/yamato/yamato_guard_hit", Armatures.BIPED)).get();
+            MOB_YAMATO_GUARD = Animations.UCHIGATANA_GUARD.get();
         }
 
         if(ModList.get().isLoaded("wom")){
-            MOB_AGONY_GUARD = builder.nextAccessor("guard/guard_agony", accessor -> new CustomGuardAnimation(accessor,
-                    "epicfight:biped/skill/guard_spear_hit", Armatures.BIPED)).get();
-            MOB_RUINE_GUARD = builder.nextAccessor("guard/guard_ruine", accessor -> new CustomGuardAnimation(accessor,
-                    "epicfight:biped/skill/guard_longsword_hit", Armatures.BIPED)).get();
-            MOB_HERRSCHER_GUARD = builder.nextAccessor("guard/guard_herrscher", accessor -> new CustomGuardAnimation(accessor,
-                    "indestructible:guard/shield_hit_left", Armatures.BIPED)).get();
+            MOB_AGONY_GUARD = Animations.SPEAR_GUARD.get();
+            MOB_RUINE_GUARD = Animations.LONGSWORD_GUARD.get();
+            MOB_HERRSCHER_GUARD = Animations.SWORD_GUARD.get();
         }
 
         SHIELD_HIT = builder.nextAccessor("guard/shield_hit_left", accessor -> new CustomGuardAnimation(accessor,

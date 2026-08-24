@@ -9,6 +9,8 @@ EFI-Unofficial is a maintained continuation of Indestructible for Epic Fight `1.
 - `nbt_tag` routing for assigning advanced patches by entity NBT
 - Extended `gear_swap` support with TACZ `gun_id`, generated gear support, and multi-slot array swaps
 - Better support for Epic Fight, TACZ, and CustomNPCs combat workflows
+- Universal NBT-selected patches for generic mobs and CustomNPCs
+- Equipment retention, native weapon motions, and reliable stun synchronization
 - Updated documentation for the full advanced behavior system
 
 ---
@@ -27,9 +29,9 @@ EFI-Unofficial keeps the original advanced behavior system and adds new routing 
 
 ## Compatibility
 
-- Epic Fight `20.14.11+`
-- `CustomNPCs-1.20.1-GBPort-Unofficial-1.20.1.20260227`
-- `tacz-1.20.1-1.1.7-hotfix2`
+- Epic Fight `20.14.17`
+- `CustomNPCs-1.20.1.20260711` (CurseForge file `8414335`)
+- `tacz-1.20.1-1.1.8-hotfix`
 
 ---
 
